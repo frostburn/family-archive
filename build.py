@@ -1,7 +1,8 @@
 from argparse import ArgumentParser
 from pathlib import Path
 from PIL import Image, ImageOps
-import yaml
+import base64
+from utils import *
 
 if __name__ == "__main__":
     parser = ArgumentParser(
@@ -15,6 +16,49 @@ if __name__ == "__main__":
     path = Path(args.directory)
 
     print("Building archive inside", path)
+
+    root_metadata_path = path / "metadata.yaml"
+
+    if not root_metadata_path.exists():
+        print("Please give root metadata.")
+        name = input("Name of the archive: ")
+        lang = None
+        while not lang in ("en", "fi"):
+            lang = input("Language (en/fi): ")
+            if lang not in ("en", "fi"):
+                print("Unsupported language, try again...")
+        admin_password = input("Admin password: ")
+
+        root_metadata = {
+            "name": name,
+            "lang": lang,
+            "admin_password": admin_password
+        }
+        save_yaml(root_metadata, root_metadata_path)
+
+    users_path = path / "users.yaml"
+
+    if not users_path.exists():
+        print("Add users. Leave empty to stop adding.")
+
+        users = {}
+        while True:
+            identifier = input("User ID / login: ")
+            if not identifier:
+                break
+            if identifier in users:
+                print("Identifier already in use.")
+                continue
+            password = input("Password: ")
+            name = input("Full name: ")
+
+            users[identifier] = {
+                "password": password,
+                "name": name
+            }
+
+        save_yaml(users, users_path)
+
 
     for album_path in path.iterdir():
         if album_path.is_dir():
@@ -39,8 +83,7 @@ if __name__ == "__main__":
                 if date:
                     info["date"] = date
 
-                with open(album_info, "w") as f:
-                    yaml.dump(info, f)
+                save_yaml(info, album_info)
 
 
             image_list = []
@@ -64,5 +107,4 @@ if __name__ == "__main__":
 
             image_list_info = metadata_path / "image-info.yaml"
             if not image_list_info.exists():
-                with open(image_list_info, "w") as f:
-                    yaml.dump(image_list, f)
+                save_yaml(image_list, image_list_info)

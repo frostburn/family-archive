@@ -1,48 +1,25 @@
 from argparse import ArgumentParser
 from pathlib import Path
 import http.server
-import yaml
 from urllib.parse import parse_qs
-from base64 import b64decode
-import time
-import calendar
+from base64 import b64encode
+from utils import *
+from i18n import set_lang, get_text as _
 
 # TODO: links to parent page
 
-LANG = "fi"
-TITLE = "Pakkasen arkisto"
-HOSTNAME = "localhost"
-PORT = 8000
+LANG = None
+NAME = None
 PATH = None
+ADMIN_AUTH = None
+USERS = {}
+USERS_BY_AUTH = {}
 
-# TODO: Hide this from version control and don't actually use this password
-# admin:admin
-ADMIN_AUTH = "Basic YWRtaW46YWRtaW4="
-
-USERS = {
-    "aliisa": {
-        "name": "Aliisa Testinen",
-        "password": "test"
-    },
-    "bertil": {
-        "name": "Bertil Testare",
-        "password": "skål"
-    }
-}
+def to_auth_string(user_id, password):
+    return (b'Basic ' +  b64encode((user_id + ":" + password).encode('utf-8'))).decode()
 
 for identifier in USERS.keys():
     USERS[identifier]["id"] = identifier
-
-def seconds_since_utc_epoch():
-    return calendar.timegm(time.gmtime())
-
-def load_yaml(path):
-    with open(path) as f:
-        return yaml.load(f, Loader=yaml.CLoader)
-
-def save_yaml(data, path):
-    with open(path, "w") as f:
-        yaml.dump(data, f, Dumper=yaml.CDumper)
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def write_utf8(self, content):
@@ -55,12 +32,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if auth == ADMIN_AUTH:
             self.admin = True
             return True
-        elif auth and auth.startswith("Basic "):
-            user, password = b64decode(auth[6:]).decode('utf-8').split(":")
-            if USERS.get(user, {}).get("password") == password:
-                self.admin = False
-                self.user = USERS[user]
-                return True
+        elif auth in USERS_BY_AUTH:
+            self.user = USERS_BY_AUTH[auth]
+            self.admin = False
+            return True
 
         self.send_response(401)
         self.send_header("WWW-Authenticate", '''Basic realm="User Visible Realm", charset="UTF-8"''')
@@ -121,7 +96,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 <html lang="{LANG}">
                     <head>
                         <meta charset="UTF-8" />
-                        <title>{TITLE}</title>
+                        <title>{NAME}</title>
             """)
 
             if which == "view":
@@ -132,20 +107,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
         if not found:
-            self.write_utf8("<p>Sivua ei löydy</p>")
+            self.write_utf8(f"""<p>{_("404:page_not_found")}</p>""")
         elif which == "index":
             self.write_index()
         elif which == "album":
             self.write_album(path.split("/")[1])
         elif which == "view":
-            _, album_url, _, img_url = path.split("/")
+            __, album_url, __, img_url = path.split("/")
             self.write_view(album_url, img_url)
         elif which == "thumbnail":
-            _, album_url, _, img_url = path.split("/")
+            __, album_url, __, img_url = path.split("/")
             with open(PATH / album_url / "thumbnails" / img_url, "rb") as f:
                 self.wfile.write(f.read())
         elif which == "img":
-            _, album_url, _, img_url = path.split("/")
+            __, album_url, __, img_url = path.split("/")
             with open(PATH / album_url / img_url, "rb") as f:
                 self.wfile.write(f.read())
 
@@ -153,7 +128,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8("</body></html>")
 
     def write_index(self):
-        self.write_utf8("<h1>Kuva-albumit</h1>")
+        self.write_utf8(f"""<h1>{_("album:albums")}</h1>""")
         for album_path in PATH.iterdir():
             if not album_path.is_dir():
                 continue
@@ -161,16 +136,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<a href="/album/{album_path.name}">{metadata["name"]}</a><br>""")
 
         if self.admin:
-            self.write_utf8("<p><b>Admin-tila aktiivinen</b></p>")
+            self.write_utf8(f"""<p><b>{_("album:admin_active")}</b></p>""")
         else:
-            self.write_utf8(f"""<p>Sisäänkirjattu: {self.user["name"]}</p>""")
+            self.write_utf8(f"""<p>{_("album:logged_in_as")}: {self.user["name"]}</p>""")
 
     def write_album(self, path):
         album_path = PATH / path
         metadata = load_yaml(album_path / "metadata" / "album-info.yaml")
         self.write_utf8(f"""<h1>{metadata["name"]}</h1>""")
-        self.write_utf8(f"""<h2>Paikka: {metadata.get("location", "(tuntematon)")}</h2>""")
-        self.write_utf8(f"""<h2>Aika: {metadata.get("date", "(tuntematon)")}</h2>""")
+
+        unknown_text = f"""({_("album:unknown")})"""
+        self.write_utf8(f"""<h2>Paikka: {metadata.get("location", unknown_text)}</h2>""")
+        self.write_utf8(f"""<h2>Aika: {metadata.get("date", unknown_text)}</h2>""")
         image_info = load_yaml(album_path / "metadata" / "image-info.yaml")
         for filename in image_info:
             prefix = f"/album/{album_path.name}"
@@ -220,11 +197,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             </div>
         """)
         if self.user:
-            self.write_utf8("""
+            self.write_utf8(f"""
                 <form method="post">
-                    <label for="comment">Kommentoi</label><br>
+                    <label for="comment">{_("album:view:comment")}</label><br>
                     <textarea id="comment" name="comment" cols="100" rows="10"></textarea><br>
-                    <input type="submit">
+                    <input type="submit" value="{_("album:view:submit")}">
                 </form>
             """)
         img_meta_path = PATH / album_url / "metadata" / (img_url + ".yaml")
@@ -233,15 +210,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             img_meta = {"comments": []}
         if img_meta["comments"]:
-            self.write_utf8("<h2>Kommentit</h2>")
+            self.write_utf8(f"""<h2>{_("album:view:comments")}</h2>""")
             for comment in img_meta["comments"]:
                 name = USERS[comment["user_id"]]["name"]
-                self.write_utf8(f"""<p>{comment["text"]}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i></p>""")
+                text = escape_and_break_lines(comment["text"])
+                self.write_utf8(f"""<p>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i></p>""")
         else:
-            self.write_utf8("<p><i>Ei kommentteja.</i></p>")
+            self.write_utf8(f"""<p><i>{_("album:view:no_comments")}</i></p>""")
 
     def do_GET(self):
         if not self.authorize():
+            return
+
+        if self.path.strip("/") == "logout":
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", '''Basic realm="User Visible Realm", charset="UTF-8"''')
+            self.end_headers()
             return
 
         self.write_page()
@@ -251,7 +235,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         content_length = int(self.headers['Content-Length'])
-        post_data = parse_qs(self.rfile.read(content_length))
+        content = self.rfile.read(content_length)
+        comment_key = b"comment"
+
+        # Workaround for: https://github.com/python/cpython/issues/74668
+        content = content.decode("utf-8")
+        comment_key = comment_key.decode("utf-8")
+
+        post_data = parse_qs(content)
 
         path = self.path.strip("/")
 
@@ -273,7 +264,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             else:
                                 img_meta = {}
                             comments = img_meta.get("comments", [])
-                            comment_text = post_data[b"comment"][0].decode("utf-8")
+                            comment_text = post_data[comment_key][0]
                             comments.append({
                                 "epoch": seconds_since_utc_epoch(),
                                 "user_id": self.user["id"],
@@ -286,20 +277,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.write_page()
 
 
-
 if __name__ == "__main__":
     parser = ArgumentParser(
         prog="Family Archive",
         description="Photo/Video archive server",
     )
     parser.add_argument("directory", type=str)
+    parser.add_argument("--hostname", type=str, default="localhost")
+    parser.add_argument("--port", type=int, default=8000)
 
     args = parser.parse_args()
 
     PATH = Path(args.directory)
 
-    server = http.server.HTTPServer((HOSTNAME, PORT), Handler)
-    print(f"serving directory {PATH} at port {PORT}")
+    print("Loading metadata...")
+    metadata = load_yaml(PATH / "metadata.yaml")
+
+    # Meh, global config
+    NAME = metadata["name"]
+    LANG = metadata["lang"]
+    ADMIN_AUTH = to_auth_string("admin", metadata["admin_password"])
+
+    set_lang(LANG)
+
+    print(f"Loading users for '{NAME}':")
+    users = load_yaml(PATH / "users.yaml")
+    for user_id in users.keys():
+        print(" " + user_id)
+        user = users[user_id]
+        user["id"] = user_id
+        USERS[user_id] = user
+        USERS_BY_AUTH[to_auth_string(user_id, user["password"])] = user
+
+    server = http.server.HTTPServer((args.hostname, args.port), Handler)
+    print(f"Serving directory {PATH} at port {args.port} or {args.hostname}.")
 
     try:
         server.serve_forever()
@@ -307,4 +318,4 @@ if __name__ == "__main__":
         pass
 
     server.server_close()
-    print("server stopped")
+    print("Server stopped.")
