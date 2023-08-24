@@ -3,11 +3,13 @@ from pathlib import Path
 import http.server
 from urllib.parse import parse_qs
 from base64 import b64encode
+from uuid import uuid4
+import logging
 from utils import *
 from i18n import set_lang, get_text as _
 
 # TODO: links to previous/next image
-# TODO: Delete own comments (hide from frontend)
+# TODO: Unify path parsing for different parts of GET and POST
 
 LANG = None
 NAME = None
@@ -142,9 +144,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self.write_utf8(f"""<p>{_("album:logged_in_as")}: {self.user["name"]}</p>""")
 
-    def write_back_anchor(self):
-        self.write_utf8(f"""<a href="..">{_("generic:back")}</a>""")
-
     def write_album_index(self):
         self.write_utf8(f"""<h1>{_("album:albums")}</h1>""")
         for album_path in PATH.iterdir():
@@ -154,7 +153,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<a href="/album/{album_path.name}">{metadata["name"]}</a><br>""")
 
         self.write_utf8("<br>")
-        self.write_back_anchor()
+        self.write_utf8(f"""<a href="/">{_("generic:back")}</a>""")
 
     def write_album(self, path):
         album_path = PATH / path
@@ -170,7 +169,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<a href="{prefix}/view/{filename}"><img src="{prefix}/thumbnail/{filename}"></a>""")
 
         self.write_utf8("<br>")
-        self.write_back_anchor()
+        self.write_utf8(f"""<a href="/album">{_("generic:back")}</a>""")
 
     def write_style(self):
         self.write_utf8("""
@@ -185,6 +184,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 .fit {
                     max-width: 100%;
                     max-height: 92vh;
+                }
+                .delete {
+                    margin-left: 1em;
+                }
+                .delete:after {
+                    content: '\\1F5D1';
                 }
                 form {
                     margin-top: 1em;
@@ -234,13 +239,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if img_meta["comments"]:
             self.write_utf8(f"""<h2>{_("album:view:comments")}</h2>""")
             for comment in img_meta["comments"]:
+                if comment.get("deleted"):
+                    continue
                 name = USERS[comment["user_id"]]["name"]
                 text = escape_and_break_lines(comment["text"])
-                self.write_utf8(f"""<p>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i></p>""")
+                self.write_utf8(f"""<p>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i>""")
+                if comment["user_id"] == self.user["id"]:
+                    self.write_utf8(f"""<button class="delete" onclick="document.getElementById('{comment["id"]}').submit()"></button>""")
+                self.write_utf8("</p>")
+                # Work around <p> elements not being able to contain <form> elements.
+                # Not the cleanest solution, but triggers the same logic as commenting so it's arguably simpler overall
+                self.write_utf8(f"""<form id="{comment["id"]}" method="post"><input type="hidden" name="delete" value="{comment["id"]}"></form>""")
         else:
             self.write_utf8(f"""<p><i>{_("album:view:no_comments")}</i></p>""")
 
-        self.write_back_anchor()
+        self.write_utf8(f"""<a href="/album/{album_url}">{_("generic:back")}</a>""")
 
         self.write_utf8("</div>")
 
@@ -263,18 +276,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         content_length = int(self.headers['Content-Length'])
         content = self.rfile.read(content_length)
         comment_key = b"comment"
+        delete_key = b"delete"
 
         # Workaround for: https://github.com/python/cpython/issues/74668
         content = content.decode("utf-8")
         comment_key = comment_key.decode("utf-8")
+        delete_key = delete_key.decode("utf-8")
 
         post_data = parse_qs(content)
+
+        logging.info("POST data: %s", post_data)
 
         path = self.path.strip("/")
 
         if path.startswith("album/"):
             parts = path.split("/")
-            for album_path in PATH.iterdir():
+            for album_path in PATH.iterdir():  # TODO: Just go there(?)
                 if not album_path.is_dir():
                     continue
                 if parts[1] == album_path.name:
@@ -290,17 +307,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             else:
                                 img_meta = {}
                             comments = img_meta.get("comments", [])
-                            comment_text = post_data[comment_key][0]
-                            comments.append({
-                                "epoch": seconds_since_utc_epoch(),
-                                "user_id": self.user["id"],
-                                "text": comment_text
-                            })
-                            img_meta["comments"] = comments
-                            save_yaml(img_meta, img_meta_path)
-                            break
+                            if comment_key in post_data:
+                                comment_text = post_data[comment_key][0]
+                                comments.append({
+                                    "epoch": seconds_since_utc_epoch(),
+                                    "user_id": self.user["id"],
+                                    "text": comment_text,
+                                    "id": str(uuid4())
+                                })
+                                img_meta["comments"] = comments
+                                save_yaml(img_meta, img_meta_path)
+                                break
+                            if delete_key in post_data:
+                                for comment in comments:
+                                    if comment["id"] == post_data[delete_key][0]:
+                                        comment["deleted"] = True
+                                        break
+                                img_meta["comments"] = comments
+                                save_yaml(img_meta, img_meta_path)
+                                break
 
-        self.write_page()
+        # Invoke Post/Redirect/Get
+        self.send_response(303)
+        self.send_header("Location", self.path)
+        self.end_headers()
 
 
 if __name__ == "__main__":
@@ -311,8 +341,12 @@ if __name__ == "__main__":
     parser.add_argument("directory", type=str)
     parser.add_argument("--hostname", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--verbose", action="store_true")
 
     args = parser.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO)
 
     PATH = Path(args.directory)
 
