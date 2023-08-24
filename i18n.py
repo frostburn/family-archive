@@ -4,6 +4,7 @@ LANG = None
 
 STRINGS = {
     "fi": {
+        "generic:back": "Takaisin",
         "404:page_not_found": "Sivua ei löydy.",
         "album:albums": "Kuva-albumit",
         "album:admin_active": "Admin-tila aktiivinen",
@@ -15,6 +16,7 @@ STRINGS = {
         "album:view:no_comments": "Ei kommentteja.",
     },
     "en": {
+        "generic:back": "Back",
         "404:page_not_found": "Page not found.",
         "album:albums": "Photo albums",
         "album:admin_active": "Admin mode active",

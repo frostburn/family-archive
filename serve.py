@@ -6,7 +6,8 @@ from base64 import b64encode
 from utils import *
 from i18n import set_lang, get_text as _
 
-# TODO: links to parent page
+# TODO: links to previous/next image
+# TODO: Delete own comments (hide from frontend)
 
 LANG = None
 NAME = None
@@ -52,36 +53,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "":
             which = "index"
             found = True
-        elif path.startswith("album/"):
+        elif path.startswith("album"):
             parts = path.split("/")
-            for album_path in PATH.iterdir():
-                if not album_path.is_dir():
-                    continue
-                if parts[1] == album_path.name:
-                    if len(parts) == 2:
-                        which = "album"
-                        found = True
-                        break
-                    elif parts[2] == "view":
-                        img_url = parts[3]
-                        if (album_path / img_url).exists():
-                            which = "view"
+            if len(parts) == 1:
+                which = "album_index"
+                found = True
+            else:
+                for album_path in PATH.iterdir():
+                    if not album_path.is_dir():
+                        continue
+                    if parts[1] == album_path.name:
+                        if len(parts) == 2:
+                            which = "album"
                             found = True
                             break
-                    elif parts[2] == "thumbnail":
-                        img_url = parts[3]
-                        if (album_path / "thumbnails" / img_url).exists():
-                            which = "thumbnail"
-                            content_type = "image/jpeg"
-                            found = True
-                            break
-                    elif parts[2] == "img":
-                        img_url = parts[3]
-                        if (album_path / img_url).exists():
-                            which = "img"
-                            content_type = "image/jpeg"
-                            found = True
-                            break
+                        elif parts[2] == "view":
+                            img_url = parts[3]
+                            if (album_path / img_url).exists():
+                                which = "view"
+                                found = True
+                                break
+                        elif parts[2] == "thumbnail":
+                            img_url = parts[3]
+                            if (album_path / "thumbnails" / img_url).exists():
+                                which = "thumbnail"
+                                content_type = "image/jpeg"
+                                found = True
+                                break
+                        elif parts[2] == "img":
+                            img_url = parts[3]
+                            if (album_path / img_url).exists():
+                                which = "img"
+                                content_type = "image/jpeg"
+                                found = True
+                                break
 
         if found:
             self.send_response(200)
@@ -110,6 +115,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<p>{_("404:page_not_found")}</p>""")
         elif which == "index":
             self.write_index()
+        elif which == "album_index":
+            self.write_album_index()
         elif which == "album":
             self.write_album(path.split("/")[1])
         elif which == "view":
@@ -128,6 +135,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8("</body></html>")
 
     def write_index(self):
+        self.write_utf8(f"""<h1>{NAME}</h1>""")
+        self.write_utf8(f"""<a href="/album/">{_("album:albums")}</a>""")
+        if self.admin:
+            self.write_utf8(f"""<p><b>{_("album:admin_active")}</b></p>""")
+        else:
+            self.write_utf8(f"""<p>{_("album:logged_in_as")}: {self.user["name"]}</p>""")
+
+    def write_back_anchor(self):
+        self.write_utf8(f"""<a href="..">{_("generic:back")}</a>""")
+
+    def write_album_index(self):
         self.write_utf8(f"""<h1>{_("album:albums")}</h1>""")
         for album_path in PATH.iterdir():
             if not album_path.is_dir():
@@ -135,10 +153,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             metadata = load_yaml(album_path / "metadata" / "album-info.yaml")
             self.write_utf8(f"""<a href="/album/{album_path.name}">{metadata["name"]}</a><br>""")
 
-        if self.admin:
-            self.write_utf8(f"""<p><b>{_("album:admin_active")}</b></p>""")
-        else:
-            self.write_utf8(f"""<p>{_("album:logged_in_as")}: {self.user["name"]}</p>""")
+        self.write_utf8("<br>")
+        self.write_back_anchor()
 
     def write_album(self, path):
         album_path = PATH / path
@@ -153,21 +169,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
             prefix = f"/album/{album_path.name}"
             self.write_utf8(f"""<a href="{prefix}/view/{filename}"><img src="{prefix}/thumbnail/{filename}"></a>""")
 
+        self.write_utf8("<br>")
+        self.write_back_anchor()
+
     def write_style(self):
         self.write_utf8("""
             <style>
+                .container {
+                    padding-left: 1.5em;
+                }
                 .imgbox {
                     display: grid;
                     height: 100%;
                 }
-                .center-fit {
+                .fit {
                     max-width: 100%;
-                    max-height: 90vh;
-                    margin: auto;
+                    max-height: 92vh;
                 }
                 form {
                     margin-top: 1em;
-                    margin-left: 2em;
                     margin-bottom: 1em;
                 }
             </style>
@@ -191,9 +211,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """)
 
     def write_view(self, album_url, img_url):
+        self.write_utf8('<div class="container">')
+
         self.write_utf8(f"""
             <div class="imgbox">
-                <img class="center-fit" src="/album/{album_url}/img/{img_url}">
+                <img class="fit" src="/album/{album_url}/img/{img_url}">
             </div>
         """)
         if self.user:
@@ -217,6 +239,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.write_utf8(f"""<p>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i></p>""")
         else:
             self.write_utf8(f"""<p><i>{_("album:view:no_comments")}</i></p>""")
+
+        self.write_back_anchor()
+
+        self.write_utf8("</div>")
 
     def do_GET(self):
         if not self.authorize():
