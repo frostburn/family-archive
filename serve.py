@@ -8,6 +8,12 @@ import logging
 from utils import *
 from i18n import set_lang, get_text as _
 
+# TODO:
+# Admin-mode: Hide image from frontend
+# Admin-mode: Change image order
+# Album-level comments
+# User blacklists/whitelists for albums
+
 LANG = None
 NAME = None
 PATH = None
@@ -211,9 +217,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 .delete:after {
                     content: '\\1F5D1';
                 }
+                .toolbar {
+                    text-align: center;
+                }
+                .align-left {
+                    float: left;
+                }
                 .align-right {
                     float: right;
                     padding-right: 2em;
+                }
+                .magnify:after {
+                    content: '\\1F50D';
                 }
                 form {
                     margin-top: 1em;
@@ -247,13 +262,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         self.write_utf8(f"""
             <div class="imgbox">
-                <img class="fit" src="/album/{album_url}/img/{img_url}">
+                <img id="main-image" class="fit" src="/album/{album_url}/img/{img_url}">
             </div>
         """)
 
-        self.write_utf8("<div>")
+        self.write_utf8("""<div class="toolbar">""")
         if index > 0:
-            self.write_utf8(f"""<a href="/album/{album_url}/view/{image_info[index-1]}">{_("album:view:previous")}</a>""")
+            self.write_utf8(f"""<a class="align-left" href="/album/{album_url}/view/{image_info[index-1]}">{_("album:view:previous")}</a>""")
+        self.write_utf8("""<button class="magnify" onclick="document.getElementById('main-image').classList.toggle('fit')"></button>""")
         if index < len(image_info) - 1:
             self.write_utf8(f"""<a class="align-right" href="/album/{album_url}/view/{image_info[index+1]}">{_("album:view:next")}</a>""")
         self.write_utf8("</div>")
