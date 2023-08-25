@@ -9,7 +9,6 @@ from utils import *
 from i18n import set_lang, get_text as _
 
 # TODO: links to previous/next image
-# TODO: Unify path parsing for different parts of GET and POST
 
 LANG = None
 NAME = None
@@ -21,8 +20,58 @@ USERS_BY_AUTH = {}
 def to_auth_string(user_id, password):
     return (b'Basic ' +  b64encode((user_id + ":" + password).encode('utf-8'))).decode()
 
-for identifier in USERS.keys():
-    USERS[identifier]["id"] = identifier
+def parse_path(path):
+    path = path.strip("/")
+
+    if path == "":
+        return {
+            "which": "index",
+            "content_type": "text/html",
+        }
+    elif path.startswith("album"):
+        parts = path.split("/")
+        if len(parts) == 1:
+            return {
+                "which": "album_index",
+                "content_type": "text/html",
+            }
+        else:
+            album_url = parts[1]
+            album_path = PATH / album_url
+            if album_path.exists() and album_path.is_dir():
+                if len(parts) == 2:
+                    return {
+                        "which": "album",
+                        "content_type": "text/html",
+                        "album_url": album_url,
+                    }
+                elif parts[2] == "view":
+                    img_url = parts[3]
+                    if (album_path / img_url).exists():
+                        return {
+                            "which": "view",
+                            "content_type": "text/html",
+                            "album_url": album_url,
+                            "img_url": img_url,
+                        }
+                elif parts[2] == "thumbnail":
+                    img_url = parts[3]
+                    if (album_path / "thumbnails" / img_url).exists():
+                        return {
+                            "which": "thumbnail",
+                            "content_type": "image/jpeg",
+                            "album_url": album_url,
+                            "img_url": img_url,
+                        }
+                elif parts[2] == "img":
+                    img_url = parts[3]
+                    if (album_path / img_url).exists():
+                        return {
+                            "which": "img",
+                            "content_type": "image/jpeg",
+                            "album_url": album_url,
+                            "img_url": img_url,
+                        }
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def write_utf8(self, content):
@@ -37,7 +86,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return True
         elif auth in USERS_BY_AUTH:
             self.user = USERS_BY_AUTH[auth]
-            self.admin = False
             return True
 
         self.send_response(401)
@@ -46,49 +94,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return False
 
     def write_page(self):
-        path = self.path.strip("/")
+        path_params = parse_path(self.path)
 
-        which = None
-        content_type = "text/html"
-        found = False
-
-        if path == "":
-            which = "index"
+        if path_params:
+            which = path_params["which"]
+            content_type = path_params["content_type"]
             found = True
-        elif path.startswith("album"):
-            parts = path.split("/")
-            if len(parts) == 1:
-                which = "album_index"
-                found = True
-            else:
-                for album_path in PATH.iterdir():
-                    if not album_path.is_dir():
-                        continue
-                    if parts[1] == album_path.name:
-                        if len(parts) == 2:
-                            which = "album"
-                            found = True
-                            break
-                        elif parts[2] == "view":
-                            img_url = parts[3]
-                            if (album_path / img_url).exists():
-                                which = "view"
-                                found = True
-                                break
-                        elif parts[2] == "thumbnail":
-                            img_url = parts[3]
-                            if (album_path / "thumbnails" / img_url).exists():
-                                which = "thumbnail"
-                                content_type = "image/jpeg"
-                                found = True
-                                break
-                        elif parts[2] == "img":
-                            img_url = parts[3]
-                            if (album_path / img_url).exists():
-                                which = "img"
-                                content_type = "image/jpeg"
-                                found = True
-                                break
+        else:
+            which = None
+            content_type = "text/html"
+            found = False
 
         if found:
             self.send_response(200)
@@ -112,7 +127,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
             self.write_utf8("</head>")
 
-
         if not found:
             self.write_utf8(f"""<p>{_("404:page_not_found")}</p>""")
         elif which == "index":
@@ -120,17 +134,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif which == "album_index":
             self.write_album_index()
         elif which == "album":
-            self.write_album(path.split("/")[1])
+            self.write_album(path_params["album_url"])
         elif which == "view":
-            __, album_url, __, img_url = path.split("/")
-            self.write_view(album_url, img_url)
+            self.write_view(path_params["album_url"], path_params["img_url"])
         elif which == "thumbnail":
-            __, album_url, __, img_url = path.split("/")
-            with open(PATH / album_url / "thumbnails" / img_url, "rb") as f:
+            with open(PATH / path_params["album_url"] / "thumbnails" / path_params["img_url"], "rb") as f:
                 self.wfile.write(f.read())
         elif which == "img":
-            __, album_url, __, img_url = path.split("/")
-            with open(PATH / album_url / img_url, "rb") as f:
+            with open(PATH / path_params["album_url"] / path_params["img_url"], "rb") as f:
                 self.wfile.write(f.read())
 
         if content_type == "text/html":
@@ -287,45 +298,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         logging.info("POST data: %s", post_data)
 
-        path = self.path.strip("/")
+        path_params = parse_path(self.path)
 
-        if path.startswith("album/"):
-            parts = path.split("/")
-            for album_path in PATH.iterdir():  # TODO: Just go there(?)
-                if not album_path.is_dir():
-                    continue
-                if parts[1] == album_path.name:
-                    if len(parts) == 2:
-                        # TODO: Album level comments
+        if path_params["which"] == "view":
+            album_url = path_params["album_url"]
+            img_url = path_params["img_url"]
+            img_meta_path = PATH / album_url / "metadata" / (img_url + ".yaml")
+            if img_meta_path.exists():
+                img_meta = load_yaml(img_meta_path) or {}
+            else:
+                img_meta = {}
+            comments = img_meta.get("comments", [])
+            if comment_key in post_data:
+                comment_text = post_data[comment_key][0]
+                comments.append({
+                    "epoch": seconds_since_utc_epoch(),
+                    "user_id": self.user["id"],
+                    "text": comment_text,
+                    "id": str(uuid4())
+                })
+                img_meta["comments"] = comments
+                save_yaml(img_meta, img_meta_path)
+            if delete_key in post_data:
+                for comment in comments:
+                    if comment["id"] == post_data[delete_key][0]:
+                        comment["deleted"] = True
                         break
-                    elif parts[2] == "view":
-                        img_url = parts[3]
-                        if (album_path / img_url).exists():
-                            img_meta_path = album_path / "metadata" / (img_url + ".yaml")
-                            if img_meta_path.exists():
-                                img_meta = load_yaml(img_meta_path) or {}
-                            else:
-                                img_meta = {}
-                            comments = img_meta.get("comments", [])
-                            if comment_key in post_data:
-                                comment_text = post_data[comment_key][0]
-                                comments.append({
-                                    "epoch": seconds_since_utc_epoch(),
-                                    "user_id": self.user["id"],
-                                    "text": comment_text,
-                                    "id": str(uuid4())
-                                })
-                                img_meta["comments"] = comments
-                                save_yaml(img_meta, img_meta_path)
-                                break
-                            if delete_key in post_data:
-                                for comment in comments:
-                                    if comment["id"] == post_data[delete_key][0]:
-                                        comment["deleted"] = True
-                                        break
-                                img_meta["comments"] = comments
-                                save_yaml(img_meta, img_meta_path)
-                                break
+                img_meta["comments"] = comments
+                save_yaml(img_meta, img_meta_path)
 
         # Invoke Post/Redirect/Get
         self.send_response(303)
