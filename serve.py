@@ -8,8 +8,6 @@ import logging
 from utils import *
 from i18n import set_lang, get_text as _
 
-# TODO: links to previous/next image
-
 LANG = None
 NAME = None
 PATH = None
@@ -213,6 +211,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 .delete:after {
                     content: '\\1F5D1';
                 }
+                .align-right {
+                    float: right;
+                    padding-right: 2em;
+                }
                 form {
                     margin-top: 1em;
                     margin-bottom: 1em;
@@ -238,6 +240,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """)
 
     def write_view(self, album_url, img_url):
+        image_info = load_yaml(PATH / album_url / "metadata" / "image-info.yaml")
+        index = image_info.index(img_url)
+
         self.write_utf8('<div class="container">')
 
         self.write_utf8(f"""
@@ -245,6 +250,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 <img class="fit" src="/album/{album_url}/img/{img_url}">
             </div>
         """)
+
+        self.write_utf8("<div>")
+        if index > 0:
+            self.write_utf8(f"""<a href="/album/{album_url}/view/{image_info[index-1]}">{_("album:view:previous")}</a>""")
+        if index < len(image_info) - 1:
+            self.write_utf8(f"""<a class="align-right" href="/album/{album_url}/view/{image_info[index+1]}">{_("album:view:next")}</a>""")
+        self.write_utf8("</div>")
+
         if self.user:
             self.write_utf8(f"""
                 <form method="post">
