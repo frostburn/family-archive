@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 from pathlib import Path
 import http.server
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 from base64 import b64encode
 from uuid import uuid4
 import logging
@@ -21,7 +21,7 @@ def to_auth_string(user_id, password):
     return (b'Basic ' +  b64encode((user_id + ":" + password).encode('utf-8'))).decode()
 
 def parse_path(path):
-    path = path.strip("/")
+    path = unquote(path).strip("/")
 
     if path == "":
         return {
@@ -121,9 +121,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         <title>{NAME}</title>
             """)
 
+            if which == "album":
+                self.write_album_style()
             if which == "view":
-                self.write_style()
-                self.write_script()
+                self.write_view_style()
+                self.write_view_script()
 
             self.write_utf8("</head>")
 
@@ -166,6 +168,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.write_utf8("<br>")
         self.write_utf8(f"""<a href="/">{_("generic:back")}</a>""")
 
+    def write_album_style(self):
+        self.write_utf8("""
+            <style>
+                img {
+                    margin-left: 3px;
+                }
+            </style>
+        """)
+
     def write_album(self, path):
         album_path = PATH / path
         metadata = load_yaml(album_path / "metadata" / "album-info.yaml")
@@ -182,7 +193,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.write_utf8("<br>")
         self.write_utf8(f"""<a href="/album">{_("generic:back")}</a>""")
 
-    def write_style(self):
+    def write_view_style(self):
         self.write_utf8("""
             <style>
                 .container {
@@ -209,7 +220,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             </style>
         """)
 
-    def write_script(self):
+    def write_view_script(self):
         self.write_utf8("""
             <script type="text/javascript">
                 function epochToLocale(secondsSinceEpochString) {
@@ -246,8 +257,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if img_meta_path.exists():
             img_meta = load_yaml(img_meta_path)
         else:
-            img_meta = {"comments": []}
-        if img_meta["comments"]:
+            img_meta = {}
+        if "comments" in img_meta:
             self.write_utf8(f"""<h2>{_("album:view:comments")}</h2>""")
             for comment in img_meta["comments"]:
                 if comment.get("deleted"):

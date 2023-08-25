@@ -4,6 +4,31 @@ from PIL import Image, ImageOps
 import base64
 from utils import *
 
+# TODO: Update users if already exists
+
+def numeric_key(path):
+    s = str(path)
+    key = []
+    part = ""
+    for c in s:
+        if c.isdigit():
+            if part.isdigit():
+                part += c
+            elif part:
+                key.append(part)
+                part = c
+        else:
+            if part.isdigit():
+                key.append(int(part))
+                part = c
+            else:
+                part += c
+    if part.isdigit():
+        key.append(int(part))
+    else:
+        key.append(part)
+    return tuple(key)
+
 if __name__ == "__main__":
     parser = ArgumentParser(
         prog="Family Archive",
@@ -85,25 +110,52 @@ if __name__ == "__main__":
 
                 save_yaml(info, album_info)
 
-
             image_list = []
 
-            for filename in album_path.iterdir():
+            file_paths = [p for p in album_path.iterdir() if not p.is_dir()]
+            file_paths.sort(key=numeric_key)
+            for file_path in file_paths:
                 try:
-                    with Image.open(filename) as img:
-                        print("Creating thumbnail for", filename.name)
+                    with Image.open(file_path) as img:
                         img = ImageOps.exif_transpose(img)
                         side_length = min(img.width, img.height)
                         x = (img.width - side_length) // 2
                         y = (img.height - side_length) // 2
                         thumbnail = img.crop((x, y, x + side_length, y + side_length))
                         thumbnail = thumbnail.resize((200, 200))
-                        thumbnail.save(thumbnail_path / filename.name)
-                        thumbnail.close()
-
-                        image_list.append(filename.name)
+                        suffix = file_path.suffix
+                        if suffix.lower() in (".jpg", ".jpeg"):
+                            thumbnail_file_path = thumbnail_path / file_path.name
+                            if not thumbnail_file_path.exists():
+                                print("Creating thumbnail for", file_path.name)
+                                thumbnail.save(thumbnail_file_path)
+                                thumbnail.close()
+                            image_list.append(file_path.name)
+                        else:
+                            jpeg_path = Path(str(file_path) + ".jpeg")
+                            if not jpeg_path.exists():
+                                print(f"Converting {file_path.name} to jpeg")
+                                img = img.convert("RGB")
+                                img.save(jpeg_path)
+                                img.close()
+                                thumbnail_file_path = thumbnail_path / jpeg_path.name
+                                if not thumbnail_file_path.exists():
+                                    print("Creating thumbnail for", jpeg_path.name)
+                                    thumbnail = thumbnail.convert("RGB")
+                                    thumbnail.save(thumbnail_file_path)
+                                    thumbnail.close()
+                                    image_list.append(jpeg_path.name)
                 except IOError:
-                    print(filename.name, "couldn't be opened as an image")
+                    print(file_path.name, "couldn't be opened as an image")
+
+            for filename in image_list:
+                file_path = album_path / filename
+                file_metadata_path = metadata_path / (filename + ".yaml")
+                if not file_metadata_path.exists():
+                    save_yaml(
+                        {"md5": md5_checksum(file_path)},
+                        file_metadata_path
+                    )
 
             image_list_info = metadata_path / "image-info.yaml"
             if not image_list_info.exists():
