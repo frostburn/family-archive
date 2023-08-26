@@ -11,7 +11,6 @@ from i18n import set_lang, get_text as _
 # TODO:
 # Admin-mode: Hide image from frontend
 # Admin-mode: Change image order
-# Album-level comments
 # User blacklists/whitelists for albums
 
 LANG = None
@@ -77,6 +76,30 @@ def parse_path(path):
                             "img_url": img_url,
                         }
 
+def process_POST_comments(comments, post_data, user_id):
+    comment_key = b"comment"
+    delete_key = b"delete"
+
+    # Workaround for: https://github.com/python/cpython/issues/74668
+    comment_key = comment_key.decode("utf-8")
+    delete_key = delete_key.decode("utf-8")
+
+    if comment_key in post_data:
+        comment_text = post_data[comment_key][0]
+        comments.append({
+            "epoch": seconds_since_utc_epoch(),
+            "user_id": user_id,
+            "text": comment_text,
+            "id": str(uuid4())
+        })
+        return True
+    if delete_key in post_data:
+        for comment in comments:
+            if comment["id"] == post_data[delete_key][0]:
+                comment["deleted"] = True
+                return True
+    return False
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def write_utf8(self, content):
         self.wfile.write(bytes(content, "utf-8"))
@@ -126,10 +149,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             """)
 
             if which == "album":
+                self.write_style()
                 self.write_album_style()
+                self.write_script()
             if which == "view":
+                self.write_style()
                 self.write_view_style()
-                self.write_view_script()
+                self.write_script()
 
             self.write_utf8("</head>")
 
@@ -172,6 +198,63 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.write_utf8("<br>")
         self.write_utf8(f"""<a href="/">{_("generic:back")}</a>""")
 
+    def write_comment_section(self, comments):
+        if self.user:
+            self.write_utf8(f"""
+                <form method="post">
+                    <label for="comment">{_("generic:comment")}</label><br>
+                    <textarea id="comment" name="comment" cols="100" rows="10"></textarea><br>
+                    <input type="submit" value="{_("generic:submit")}">
+                </form>
+            """)
+
+        if comments is None:
+            self.write_utf8(f"""<p><i>{_("generic:no_comments")}</i></p>""")
+            return
+
+        self.write_utf8(f"""<h2>{_("generic:comments")}</h2>""")
+        for comment in comments:
+            if comment.get("deleted"):
+                continue
+            name = USERS[comment["user_id"]]["name"]
+            text = escape_and_break_lines(comment["text"])
+            self.write_utf8(f"""<p>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i>""")
+            if comment["user_id"] == self.user["id"]:
+                self.write_utf8(f"""<button class="delete" onclick="document.getElementById('{comment["id"]}').submit()"></button>""")
+            self.write_utf8("</p>")
+            # Work around <p> elements not being able to contain <form> elements.
+            # Not the cleanest solution, but triggers the same logic as commenting so it's arguably simpler overall
+            self.write_utf8(f"""<form id="{comment["id"]}" method="post"><input type="hidden" name="delete" value="{comment["id"]}"></form>""")
+
+    def write_style(self):
+        self.write_utf8("""
+            <style>
+                .delete {
+                    margin-left: 1em;
+                }
+                .delete:after {
+                    content: '\\1F5D1';
+                }
+            </style>
+        """)
+
+    def write_script(self):
+        self.write_utf8("""
+            <script type="text/javascript">
+                function epochToLocale(secondsSinceEpochString) {
+                    const seconds = parseInt(secondsSinceEpochString);
+                    const date = new Date(0);
+                    date.setUTCSeconds(seconds);
+                    return date.toLocaleString();
+                }
+                document.addEventListener("DOMContentLoaded", function(event) {
+                    document.querySelectorAll(".epoch").forEach(el => {
+                        el.textContent = epochToLocale(el.textContent);
+                    });
+                });
+            </script>
+        """)
+
     def write_album_style(self):
         self.write_utf8("""
             <style>
@@ -195,6 +278,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<a href="{prefix}/view/{filename}"><img src="{prefix}/thumbnail/{filename}"></a>""")
 
         self.write_utf8("<br>")
+        comments_path = album_path / "metadata" / "comments.yaml"
+        if comments_path.exists():
+            self.write_comment_section(load_yaml(comments_path))
+        else:
+            self.write_comment_section(None)
         self.write_utf8(f"""<a href="/album">{_("generic:back")}</a>""")
 
     def write_view_style(self):
@@ -210,12 +298,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 .fit {
                     max-width: 100%;
                     max-height: 92vh;
-                }
-                .delete {
-                    margin-left: 1em;
-                }
-                .delete:after {
-                    content: '\\1F5D1';
                 }
                 .toolbar {
                     text-align: center;
@@ -235,23 +317,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     margin-bottom: 1em;
                 }
             </style>
-        """)
-
-    def write_view_script(self):
-        self.write_utf8("""
-            <script type="text/javascript">
-                function epochToLocale(secondsSinceEpochString) {
-                    const seconds = parseInt(secondsSinceEpochString);
-                    const date = new Date(0);
-                    date.setUTCSeconds(seconds);
-                    return date.toLocaleString();
-                }
-                document.addEventListener("DOMContentLoaded", function(event) {
-                    document.querySelectorAll(".epoch").forEach(el => {
-                        el.textContent = epochToLocale(el.textContent);
-                    });
-                });
-            </script>
         """)
 
     def write_view(self, album_url, img_url):
@@ -274,35 +339,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<a class="align-right" href="/album/{album_url}/view/{image_info[index+1]}">{_("album:view:next")}</a>""")
         self.write_utf8("</div>")
 
-        if self.user:
-            self.write_utf8(f"""
-                <form method="post">
-                    <label for="comment">{_("album:view:comment")}</label><br>
-                    <textarea id="comment" name="comment" cols="100" rows="10"></textarea><br>
-                    <input type="submit" value="{_("album:view:submit")}">
-                </form>
-            """)
         img_meta_path = PATH / album_url / "metadata" / (img_url + ".yaml")
         if img_meta_path.exists():
             img_meta = load_yaml(img_meta_path)
         else:
             img_meta = {}
-        if "comments" in img_meta:
-            self.write_utf8(f"""<h2>{_("album:view:comments")}</h2>""")
-            for comment in img_meta["comments"]:
-                if comment.get("deleted"):
-                    continue
-                name = USERS[comment["user_id"]]["name"]
-                text = escape_and_break_lines(comment["text"])
-                self.write_utf8(f"""<p>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i>""")
-                if comment["user_id"] == self.user["id"]:
-                    self.write_utf8(f"""<button class="delete" onclick="document.getElementById('{comment["id"]}').submit()"></button>""")
-                self.write_utf8("</p>")
-                # Work around <p> elements not being able to contain <form> elements.
-                # Not the cleanest solution, but triggers the same logic as commenting so it's arguably simpler overall
-                self.write_utf8(f"""<form id="{comment["id"]}" method="post"><input type="hidden" name="delete" value="{comment["id"]}"></form>""")
-        else:
-            self.write_utf8(f"""<p><i>{_("album:view:no_comments")}</i></p>""")
+
+        self.write_comment_section(img_meta.get("comments"))
 
         self.write_utf8(f"""<a href="/album/{album_url}">{_("generic:back")}</a>""")
 
@@ -326,19 +369,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         content_length = int(self.headers['Content-Length'])
         content = self.rfile.read(content_length)
-        comment_key = b"comment"
-        delete_key = b"delete"
 
         # Workaround for: https://github.com/python/cpython/issues/74668
         content = content.decode("utf-8")
-        comment_key = comment_key.decode("utf-8")
-        delete_key = delete_key.decode("utf-8")
 
         post_data = parse_qs(content)
 
         logging.info("POST data: %s", post_data)
 
         path_params = parse_path(self.path)
+
+        if path_params["which"] == "album":
+            album_url = path_params["album_url"]
+            comments_path = PATH / album_url / "metadata" / "comments.yaml"
+            if comments_path.exists():
+                comments = load_yaml(comments_path)
+            else:
+                comments = []
+
+            if process_POST_comments(comments, post_data, self.user["id"]):
+                save_yaml(comments, comments_path)
 
         if path_params["which"] == "view":
             album_url = path_params["album_url"]
@@ -349,21 +399,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 img_meta = {}
             comments = img_meta.get("comments", [])
-            if comment_key in post_data:
-                comment_text = post_data[comment_key][0]
-                comments.append({
-                    "epoch": seconds_since_utc_epoch(),
-                    "user_id": self.user["id"],
-                    "text": comment_text,
-                    "id": str(uuid4())
-                })
-                img_meta["comments"] = comments
-                save_yaml(img_meta, img_meta_path)
-            if delete_key in post_data:
-                for comment in comments:
-                    if comment["id"] == post_data[delete_key][0]:
-                        comment["deleted"] = True
-                        break
+
+            if process_POST_comments(comments, post_data, self.user["id"]):
                 img_meta["comments"] = comments
                 save_yaml(img_meta, img_meta_path)
 

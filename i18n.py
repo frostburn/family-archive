@@ -12,10 +12,10 @@ STRINGS = {
         "album:unknown": "tuntematon",
         "album:view:previous": "Edellinen",
         "album:view:next": "Seuraava",
-        "album:view:comment": "Kommentoi",
-        "album:view:submit": "Lähetä",
-        "album:view:comments": "Kommentit",
-        "album:view:no_comments": "Ei kommentteja.",
+        "generic:comment": "Kommentoi",
+        "generic:submit": "Lähetä",
+        "generic:comments": "Kommentit",
+        "generic:no_comments": "Ei kommentteja.",
     },
     "en": {
         "generic:back": "Back",
@@ -26,10 +26,10 @@ STRINGS = {
         "album:unknown": "unknown",
         "album:view:previous": "Previous",
         "album:view:next": "Next",
-        "album:view:comment": "Comment",
-        "album:view:submit": "Submit",
-        "album:view:comments": "Comments",
-        "album:view:no_comments": "No comments."
+        "generic:comment": "Comment",
+        "generic:submit": "Submit",
+        "generic:comments": "Comments",
+        "generic:no_comments": "No comments."
     }
 }
 
