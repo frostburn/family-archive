@@ -12,6 +12,7 @@ from i18n import set_lang, get_text as _
 # Admin-mode: Hide image from frontend
 # Admin-mode: Change image order
 # User blacklists/whitelists for albums
+# Reserve space for images (store dimensions in metadata)
 
 LANG = None
 NAME = None
@@ -145,6 +146,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 <html lang="{LANG}">
                     <head>
                         <meta charset="UTF-8" />
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <title>{NAME}</title>
             """)
 
@@ -203,7 +205,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""
                 <form method="post">
                     <label for="comment">{_("generic:comment")}</label><br>
-                    <textarea id="comment" name="comment" cols="100" rows="10"></textarea><br>
+                    <textarea id="comment" name="comment"></textarea><br>
                     <input type="submit" value="{_("generic:submit")}">
                 </form>
             """)
@@ -234,6 +236,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 }
                 .delete:after {
                     content: '\\1F5D1';
+                }
+                textarea {
+                    resize: none;
+                    width: 97%;
+                    min-height: 10em;
+                    margin-left: 2em;
                 }
             </style>
         """)
@@ -275,7 +283,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         image_info = load_yaml(album_path / "metadata" / "image-info.yaml")
         for filename in image_info:
             prefix = f"/album/{album_path.name}"
-            self.write_utf8(f"""<a href="{prefix}/view/{filename}"><img src="{prefix}/thumbnail/{filename}"></a>""")
+            self.write_utf8(f"""<a href="{prefix}/view/{filename}"><img src="{prefix}/thumbnail/{filename}" width="200" height="200"></a>""")
 
         self.write_utf8("<br>")
         comments_path = album_path / "metadata" / "comments.yaml"
