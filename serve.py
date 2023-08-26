@@ -241,7 +241,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     resize: none;
                     width: 97%;
                     min-height: 10em;
-                    margin-left: 2em;
                 }
             </style>
         """)
