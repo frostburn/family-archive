@@ -115,6 +115,16 @@ if __name__ == "__main__":
             file_paths = [p for p in album_path.iterdir() if not p.is_dir()]
             file_paths.sort(key=numeric_key)
             for file_path in file_paths:
+                suffix = file_path.suffix
+                if suffix.lower() in (".jpg", ".jpeg"):
+                    thumbnail_file_path = thumbnail_path / file_path.name
+                    if thumbnail_file_path.exists():
+                        continue
+                else:
+                    jpeg_path = Path(str(file_path) + ".jpeg")
+                    thumbnail_file_path = thumbnail_path / jpeg_path.name
+                    if thumbnail_file_path.exists():
+                        continue
                 try:
                     with Image.open(file_path) as img:
                         img = ImageOps.exif_transpose(img)
@@ -123,28 +133,22 @@ if __name__ == "__main__":
                         y = (img.height - side_length) // 2
                         thumbnail = img.crop((x, y, x + side_length, y + side_length))
                         thumbnail = thumbnail.resize((200, 200))
-                        suffix = file_path.suffix
                         if suffix.lower() in (".jpg", ".jpeg"):
-                            thumbnail_file_path = thumbnail_path / file_path.name
-                            if not thumbnail_file_path.exists():
-                                print("Creating thumbnail for", file_path.name)
-                                thumbnail.save(thumbnail_file_path)
-                                thumbnail.close()
+                            print("Creating thumbnail for", file_path.name)
+                            thumbnail.save(thumbnail_file_path)
+                            thumbnail.close()
                             image_list.append(file_path.name)
-                        else:
-                            jpeg_path = Path(str(file_path) + ".jpeg")
-                            if not jpeg_path.exists():
-                                print(f"Converting {file_path.name} to jpeg")
-                                img = img.convert("RGB")
-                                img.save(jpeg_path)
-                                img.close()
-                                thumbnail_file_path = thumbnail_path / jpeg_path.name
-                                if not thumbnail_file_path.exists():
-                                    print("Creating thumbnail for", jpeg_path.name)
-                                    thumbnail = thumbnail.convert("RGB")
-                                    thumbnail.save(thumbnail_file_path)
-                                    thumbnail.close()
-                                    image_list.append(jpeg_path.name)
+                        elif not jpeg_path.exists():
+                            print(f"Converting {file_path.name} to jpeg")
+                            img = img.convert("RGB")
+                            img.save(jpeg_path)
+                            img.close()
+                            thumbnail_file_path = thumbnail_path / jpeg_path.name
+                            print("Creating thumbnail for", jpeg_path.name)
+                            thumbnail = thumbnail.convert("RGB")
+                            thumbnail.save(thumbnail_file_path)
+                            thumbnail.close()
+                            image_list.append(jpeg_path.name)
                 except IOError:
                     print(file_path.name, "couldn't be opened as an image")
 
