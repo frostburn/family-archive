@@ -84,9 +84,11 @@ if __name__ == "__main__":
 
         save_yaml(users, users_path)
 
+    albums = []
 
     for album_path in path.iterdir():
         if album_path.is_dir():
+            albums.append(album_path.name)
             print("Working on", album_path)
             thumbnail_path = album_path / "thumbnails"
             thumbnail_path.mkdir(exist_ok=True)
@@ -164,3 +166,5 @@ if __name__ == "__main__":
             image_list_info = metadata_path / "image-info.yaml"
             if not image_list_info.exists():
                 save_yaml(image_list, image_list_info)
+
+    save_yaml(albums, path / "album-info.yaml")

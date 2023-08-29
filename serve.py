@@ -191,11 +191,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def write_album_index(self):
         self.write_utf8(f"""<h1>{_("album:albums")}</h1>""")
-        for album_path in PATH.iterdir():
-            if not album_path.is_dir():
-                continue
+        album_urls = load_yaml(PATH / "album-info.yaml")
+        for album_url in album_urls:
+            album_path = PATH / album_url
             metadata = load_yaml(album_path / "metadata" / "album-info.yaml")
-            self.write_utf8(f"""<a href="/album/{album_path.name}">{metadata["name"]}</a><br>""")
+            self.write_utf8(f"""<a href="/album/{album_url}">{metadata["name"]}</a><br>""")
 
         self.write_utf8("<br>")
         self.write_utf8(f"""<a href="/">{_("generic:back")}</a>""")
@@ -454,7 +454,7 @@ if __name__ == "__main__":
         USERS_BY_AUTH[to_auth_string(user_id, user["password"])] = user
 
     server = http.server.HTTPServer((args.hostname, args.port), Handler)
-    print(f"Serving directory {PATH} at port {args.port} or {args.hostname}.")
+    print(f"Serving directory {PATH} at port {args.port} of {args.hostname}.")
 
     try:
         server.serve_forever()
