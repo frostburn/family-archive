@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 from pathlib import Path
 import http.server
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlparse
 from base64 import b64encode
 from uuid import uuid4
 import logging
@@ -10,9 +10,11 @@ from i18n import set_lang, get_text as _
 
 # TODO:
 # Admin-mode: Hide image from frontend
-# Admin-mode: Change image order
+# Admin-mode: Change image/album order
+# Admin-mode: Change album details
 # User blacklists/whitelists for albums
 # Reserve space for images (store dimensions in metadata)
+# Family tree
 
 LANG = None
 NAME = None
@@ -20,17 +22,26 @@ PATH = None
 ADMIN_AUTH = None
 USERS = {}
 USERS_BY_AUTH = {}
+CACHE = {}
 
 def to_auth_string(user_id, password):
     return (b'Basic ' +  b64encode((user_id + ":" + password).encode('utf-8'))).decode()
 
 def parse_path(path):
-    path = unquote(path).strip("/")
+    parsed = urlparse(path)
+    path = unquote(parsed.path).strip("/")
+    query = parse_qs(parsed.query)
 
     if path == "":
         return {
             "which": "index",
             "content_type": "text/html",
+        }
+    elif path == "comments":
+        return {
+            "which": "comments",
+            "query": query,
+            "content_type": "text/html"
         }
     elif path.startswith("album"):
         parts = path.split("/")
@@ -77,7 +88,7 @@ def parse_path(path):
                             "img_url": img_url,
                         }
 
-def process_POST_comments(comments, post_data, user_id):
+def process_POST_comments(comments, post_data, user_id, url, thumbnail=None):
     comment_key = b"comment"
     delete_key = b"delete"
 
@@ -93,12 +104,30 @@ def process_POST_comments(comments, post_data, user_id):
             "text": comment_text,
             "id": str(uuid4())
         })
+
+        # Cache
+        comment = dict(comments[-1])
+        comment["url"] = url
+        if thumbnail is not None:
+            comment["thumbnail"] = thumbnail
+        CACHE["comments"].insert(0, comment)
+
         return True
     if delete_key in post_data:
         for comment in comments:
             if comment["id"] == post_data[delete_key][0]:
                 comment["deleted"] = True
+
+                # Cache
+                comment = None
+                for comment in CACHE["comments"]:
+                    if comment["id"] == post_data[delete_key][0]:
+                        break
+                if comment is not None:
+                    CACHE["comments"].remove(comment)
+
                 return True
+
     return False
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -149,7 +178,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <title>{NAME}</title>
             """)
-
+            if which == "comments":
+                self.write_style()
+                self.write_script()
             if which == "album":
                 self.write_style()
                 self.write_album_style()
@@ -165,6 +196,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<p>{_("404:page_not_found")}</p>""")
         elif which == "index":
             self.write_index()
+        elif which == "comments":
+            if path_params["query"].get("all"):
+                self.write_comments(None)
+            else:
+                self.write_comments()
         elif which == "album_index":
             self.write_album_index()
         elif which == "album":
@@ -183,11 +219,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def write_index(self):
         self.write_utf8(f"""<h1>{NAME}</h1>""")
-        self.write_utf8(f"""<a href="/album/">{_("album:albums")}</a>""")
+        self.write_utf8(f"""<a href="/album/">{_("album:albums")}</a><br>""")
+        self.write_utf8(f"""<a href="/comments/">{_("comments:latest_comments")}</a>""")
         if self.admin:
             self.write_utf8(f"""<p><b>{_("album:admin_active")}</b></p>""")
         else:
             self.write_utf8(f"""<p>{_("album:logged_in_as")}: {self.user["name"]}</p>""")
+
+    def write_comments(self, limit=20):
+        self.write_utf8(f"""<h1>{_("comments:latest_comments")}</h1>""")
+        comments = CACHE["comments"]
+        if limit is not None:
+            comments = comments[:limit]
+        for comment in comments:
+            name = USERS[comment["user_id"]]["name"]
+            text = escape_and_break_lines(comment["text"])
+            if "thumbnail" in comment:
+                anchor_content = f"""<img src="{comment["thumbnail"]}">"""
+            else:
+                anchor_content = comment["url"]
+            self.write_utf8(f"""<p><a href="{comment["url"]}">{anchor_content}</a><br>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i></p>""")
+        if limit is not None and len(CACHE["comments"]) > limit:
+            self.write_utf8(f"""<a href="?all=1">{_("comments:more")}</a><br>""")
+
+        self.write_utf8("<br>")
+        self.write_utf8(f"""<a href="/">{_("generic:back")}</a>""")
 
     def write_album_index(self):
         self.write_utf8(f"""<h1>{_("album:albums")}</h1>""")
@@ -241,6 +297,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     resize: none;
                     width: 97%;
                     min-height: 10em;
+                }
+                i {
+                    font-size: smaller;
                 }
             </style>
         """)
@@ -394,7 +453,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 comments = []
 
-            if process_POST_comments(comments, post_data, self.user["id"]):
+            url = f"/album/{album_url}/"
+            if process_POST_comments(comments, post_data, self.user["id"], url):
                 save_yaml(comments, comments_path)
 
         if path_params["which"] == "view":
@@ -407,7 +467,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 img_meta = {}
             comments = img_meta.get("comments", [])
 
-            if process_POST_comments(comments, post_data, self.user["id"]):
+            url = f"/album/{album_url}/view/{img_url}"
+            thumbnail = f"/album/{album_url}/thumbnail/{img_url}"
+            if process_POST_comments(comments, post_data, self.user["id"], url, thumbnail):
                 img_meta["comments"] = comments
                 save_yaml(img_meta, img_meta_path)
 
@@ -453,6 +515,15 @@ if __name__ == "__main__":
         USERS[user_id] = user
         USERS_BY_AUTH[to_auth_string(user_id, user["password"])] = user
 
+
+    # Single-threaded, lol
+    cache_path = PATH / "_cache.yaml"
+    if cache_path.exists():
+        print("Loading cache...")
+        CACHE = load_yaml(cache_path)
+    else:
+        CACHE = {"comments": []}
+
     server = http.server.HTTPServer((args.hostname, args.port), Handler)
     print(f"Serving directory {PATH} at port {args.port} of {args.hostname}.")
 
@@ -460,6 +531,9 @@ if __name__ == "__main__":
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+
+    print("Saving cache...")
+    save_yaml(CACHE, cache_path)
 
     server.server_close()
     print("Server stopped.")
