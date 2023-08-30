@@ -89,14 +89,33 @@ def parse_path(path):
                         }
 
 def process_POST_comments(comments, post_data, user_id, url, thumbnail=None):
+    update_key = b"update"
+    text_key = b"text"
     comment_key = b"comment"
     delete_key = b"delete"
 
     # Workaround for: https://github.com/python/cpython/issues/74668
+    update_key = update_key.decode("utf-8")
+    text_key = text_key.decode("utf-8")
     comment_key = comment_key.decode("utf-8")
     delete_key = delete_key.decode("utf-8")
 
-    if comment_key in post_data:
+    if update_key in post_data:
+        for comment in comments:
+            if comment["id"] == post_data[update_key][0]:
+                updated_on = seconds_since_utc_epoch()
+                comment["text"] = post_data[text_key][0]
+                comment["updated_on"] = updated_on
+
+                # Cache
+                for comment in CACHE["comments"]:
+                    if comment["id"] == post_data[update_key][0]:
+                        comment["text"] = post_data[text_key][0]
+                        comment["updated_on"] = updated_on
+                        break
+
+                return True
+    elif comment_key in post_data:
         comment_text = post_data[comment_key][0]
         comments.append({
             "epoch": seconds_since_utc_epoch(),
@@ -113,7 +132,7 @@ def process_POST_comments(comments, post_data, user_id, url, thumbnail=None):
         CACHE["comments"].insert(0, comment)
 
         return True
-    if delete_key in post_data:
+    elif delete_key in post_data:
         for comment in comments:
             if comment["id"] == post_data[delete_key][0]:
                 comment["deleted"] = True
@@ -275,10 +294,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if comment.get("deleted"):
                 continue
             name = USERS[comment["user_id"]]["name"]
-            text = escape_and_break_lines(comment["text"])
-            self.write_utf8(f"""<p>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i>""")
+            text = "<span>" + escape_and_break_lines(comment["text"]) + "</span>"
+            update_notice = ''
+            if "updated_on" in comment:
+                update_notice = f"""<i> ({_("generic:updated")})</i>"""
+            self.write_utf8(f"""<p>{text}<br><i>{name}</i><br><i class="epoch">{comment["epoch"]}</i>{update_notice}""")
             if comment["user_id"] == self.user["id"]:
-                self.write_utf8(f"""<button class="delete" onclick="document.getElementById('{comment["id"]}').submit()"></button>""")
+                self.write_utf8(f"""<button class="icon edit" data-id="{comment["id"]}"></button>""")
+                self.write_utf8(f"""<button class="icon delete" onclick="document.getElementById('{comment["id"]}').submit()"></button>""")
             self.write_utf8("</p>")
             # Work around <p> elements not being able to contain <form> elements.
             # Not the cleanest solution, but triggers the same logic as commenting so it's arguably simpler overall
@@ -287,11 +310,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def write_style(self):
         self.write_utf8("""
             <style>
-                .delete {
-                    margin-left: 1em;
+                .icon {
+                    padding: 0;
+                    margin-left: 0.5em;
+                    width: 1.75em;
+                    height: 1.75em;
+                    text-align: center;
                 }
                 .delete:after {
                     content: '\\1F5D1';
+                }
+                .edit:after {
+                    content: '\\270E';
                 }
                 textarea {
                     resize: none;
@@ -307,6 +337,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def write_script(self):
         self.write_utf8("""
             <script type="text/javascript">
+                const SUBMIT = "%s";
+
+                function activateEditing(event) {
+                    const element = event.target;
+                    const id = element.dataset.id;
+                    let text = '';
+                    element.parentElement.firstChild.childNodes.forEach(child => {
+                        if (child.nodeName === "#text") {
+                            text = text + child.textContent;
+                        } else if (child.nodeName === "BR") {
+                            text = text + '\\n';
+                        }
+                    });
+                    element.parentElement.firstChild.remove();  // <span>
+                    element.parentElement.firstChild.remove();  // <br>
+
+                    const textArea = document.createElement("textarea");
+                    textArea.name = "text";
+                    textArea.value = text;
+                    const submit = document.createElement("input");
+                    submit.type = "submit";
+                    submit.value = SUBMIT;
+                    const hidden = document.createElement("input");
+                    hidden.type = "hidden";
+                    hidden.name = "update";
+                    hidden.value = id;
+                    const form = document.createElement("form");
+                    form.method = "post";
+                    form.appendChild(textArea);
+                    form.appendChild(hidden);
+                    form.appendChild(submit);
+
+                    element.parentElement.before(form);
+                }
+
                 function epochToLocale(secondsSinceEpochString) {
                     const seconds = parseInt(secondsSinceEpochString);
                     const date = new Date(0);
@@ -317,9 +382,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     document.querySelectorAll(".epoch").forEach(el => {
                         el.textContent = epochToLocale(el.textContent);
                     });
+
+                    document.querySelectorAll(".edit").forEach(el => {
+                        el.addEventListener("click", activateEditing)
+                    })
                 });
             </script>
-        """)
+        """ % _("generic:submit"))
 
     def write_album_style(self):
         self.write_utf8("""
