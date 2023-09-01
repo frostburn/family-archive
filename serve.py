@@ -15,6 +15,7 @@ from i18n import set_lang, get_text as _
 # User blacklists/whitelists for albums
 # Reserve space for images (store dimensions in metadata)
 # Family tree
+# Mark old version of updated comments as deleted for forensics
 
 LANG = None
 NAME = None
@@ -23,6 +24,7 @@ ADMIN_AUTH = None
 USERS = {}
 USERS_BY_AUTH = {}
 CACHE = {}
+STATIC_SERVER = None
 
 def to_auth_string(user_id, password):
     return (b'Basic ' +  b64encode((user_id + ":" + password).encode('utf-8'))).decode()
@@ -86,6 +88,50 @@ def parse_path(path):
                             "content_type": "image/jpeg",
                             "album_url": album_url,
                             "img_url": img_url,
+                        }
+    elif path.startswith("video-album"):
+        parts = path.split("/")
+        if len(parts) == 1:
+            return {
+                "which": "video_album_index",
+                "content_type": "text/html",
+            }
+        else:
+            video_album_url = parts[1]
+            video_album_path = PATH / video_album_url
+            if video_album_path.exists() and video_album_path.is_dir():
+                if len(parts) == 2:
+                    return {
+                        "which": "video_album",
+                        "content_type": "text/html",
+                        "video_album_url": video_album_url
+                    }
+                elif parts[2] == "view":
+                    video_url = parts[3]
+                    if (video_album_path / video_url).exists():
+                        return {
+                            "which": "video_view",
+                            "content_type": "text/html",
+                            "video_album_url": video_album_url,
+                            "video_url": video_url,
+                        }
+                elif parts[2] == "thumbnail":
+                    img_url = parts[3]
+                    if (video_album_path / "thumbnails" / img_url).exists():
+                        return {
+                            "which": "video_thumbnail",
+                            "content_type": "image/jpeg",
+                            "video_album_url": video_album_url,
+                            "img_url": img_url,
+                        }
+                elif parts[2] == "video":
+                    video_url = parts[3]
+                    if (video_album_path / video_url).exists():
+                        return {
+                            "which": "video",
+                            "content_type": "video/mp4",
+                            "video_album_url": video_album_url,
+                            "video_url": video_url,
                         }
 
 def process_POST_comments(comments, post_data, user_id, url, thumbnail=None):
@@ -197,17 +243,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <title>{NAME}</title>
             """)
-            if which == "comments":
+            if which in ["comments", "album", "view", "video_album", "video_view"]:
                 self.write_style()
                 self.write_script()
-            if which == "album":
-                self.write_style()
+            if which in ["album", "video_album"]:
                 self.write_album_style()
-                self.write_script()
-            if which == "view":
-                self.write_style()
+            if which in ["view", "video_view"]:
                 self.write_view_style()
-                self.write_script()
 
             self.write_utf8("</head>")
 
@@ -232,13 +274,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif which == "img":
             with open(PATH / path_params["album_url"] / path_params["img_url"], "rb") as f:
                 self.wfile.write(f.read())
+        elif which == "video_album_index":
+            self.write_video_album_index()
+        elif which == "video_album":
+            self.write_video_album(path_params["video_album_url"])
+        elif which == "video_view":
+            self.write_video_view(path_params["video_album_url"], path_params["video_url"])
+        elif which == "video_thumbnail":
+            with open(PATH / path_params["video_album_url"] / "thumbnails" / path_params["img_url"], "rb") as f:
+                self.wfile.write(f.read())
+        elif which == "video":
+            print("WARNING: Serving video file through the main thread. Please configure a static server.")
+            with open(PATH / path_params["video_album_url"] / path_params["video_url"], "rb") as f:
+                while chunk := f.read(8192):
+                    self.wfile.write(chunk)
 
         if content_type == "text/html":
             self.write_utf8("</body></html>")
 
     def write_index(self):
         self.write_utf8(f"""<h1>{NAME}</h1>""")
-        self.write_utf8(f"""<a href="/album/">{_("album:albums")}</a><br>""")
+        if (PATH / "album-info.yaml").exists():
+            self.write_utf8(f"""<a href="/album/">{_("album:albums")}</a><br>""")
+        if (PATH / "video-album-info.yaml").exists():
+            self.write_utf8(f"""<a href="/video-album/">{_("video_album:video_albums")}</a><br>""")
         self.write_utf8(f"""<a href="/comments/">{_("comments:latest_comments")}</a>""")
         if self.admin:
             self.write_utf8(f"""<p><b>{_("album:admin_active")}</b></p>""")
@@ -405,8 +464,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.write_utf8(f"""<h1>{metadata["name"]}</h1>""")
 
         unknown_text = f"""({_("album:unknown")})"""
-        self.write_utf8(f"""<h2>Paikka: {metadata.get("location", unknown_text)}</h2>""")
-        self.write_utf8(f"""<h2>Aika: {metadata.get("date", unknown_text)}</h2>""")
+        self.write_utf8(f"""<h2>{_("generic:location")}: {metadata.get("location", unknown_text)}</h2>""")
+        self.write_utf8(f"""<h2>{_("generic:date")}: {metadata.get("date", unknown_text)}</h2>""")
         image_info = load_yaml(album_path / "metadata" / "image-info.yaml")
         for filename in image_info:
             prefix = f"/album/{album_path.name}"
@@ -468,10 +527,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         self.write_utf8("""<div class="toolbar">""")
         if index > 0:
-            self.write_utf8(f"""<a class="align-left" href="/album/{album_url}/view/{image_info[index-1]}">{_("album:view:previous")}</a>""")
-        self.write_utf8("""<button class="magnify" onclick="document.getElementById('main-image').classList.toggle('fit')"></button>""")
+            self.write_utf8(f"""<a class="align-left" href="/album/{album_url}/view/{image_info[index-1]}">{_("generic:previous")}</a>""")
+        self.write_utf8("""<button class="icon magnify" onclick="document.getElementById('main-image').classList.toggle('fit')"></button>""")
         if index < len(image_info) - 1:
-            self.write_utf8(f"""<a class="align-right" href="/album/{album_url}/view/{image_info[index+1]}">{_("album:view:next")}</a>""")
+            self.write_utf8(f"""<a class="align-right" href="/album/{album_url}/view/{image_info[index+1]}">{_("generic:next")}</a>""")
         self.write_utf8("</div>")
 
         img_meta_path = PATH / album_url / "metadata" / (img_url + ".yaml")
@@ -483,6 +542,80 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.write_comment_section(img_meta.get("comments"))
 
         self.write_utf8(f"""<a href="/album/{album_url}">{_("generic:back")}</a>""")
+
+        self.write_utf8("</div>")
+
+    def write_video_album_index(self):
+        self.write_utf8(f"""<h1>{_("video_album:video_albums")}</h1>""")
+        video_album_urls = load_yaml(PATH / "video-album-info.yaml")
+        for video_album_url in video_album_urls:
+            video_album_path = PATH / video_album_url
+            metadata = load_yaml(video_album_path / "metadata" / "album-info.yaml")
+            self.write_utf8(f"""<a href="/video-album/{video_album_url}">{metadata["name"]}</a><br>""")
+
+        self.write_utf8("<br>")
+        self.write_utf8(f"""<a href="/">{_("generic:back")}</a>""")
+
+    def write_video_album(self, path):
+        video_album_path = PATH / path
+        metadata = load_yaml(video_album_path / "metadata" / "album-info.yaml")
+        self.write_utf8(f"""<h1>{metadata["name"]}</h1>""")
+
+        unknown_text = f"""({_("album:unknown")})"""
+        self.write_utf8(f"""<h2>{_("generic:location")}: {metadata.get("location", unknown_text)}</h2>""")
+        self.write_utf8(f"""<h2>{_("generic:date")}: {metadata.get("date", unknown_text)}</h2>""")
+        video_info = load_yaml(video_album_path / "metadata" / "video-info.yaml")
+        for filename in video_info:
+            video_metadata = load_yaml(video_album_path / "metadata" / (filename + ".yaml"))
+            prefix = f"/video-album/{video_album_path.name}"
+            self.write_utf8(f"""
+                <a href="{prefix}/view/{filename}">
+                    <img src="{prefix}/thumbnail/{filename}.jpeg" width="200" height="200">
+                    {video_metadata["name"]}
+                </a>
+                <br>
+            """)
+
+        comments_path = video_album_path / "metadata" / "comments.yaml"
+        if comments_path.exists():
+            self.write_comment_section(load_yaml(comments_path))
+        else:
+            self.write_comment_section(None)
+        self.write_utf8(f"""<a href="/video-album">{_("generic:back")}</a>""")
+
+    def write_video_view(self, video_album_url, video_url):
+        video_info = load_yaml(PATH / video_album_url / "metadata" / "video-info.yaml")
+        index = video_info.index(video_url)
+
+        self.write_utf8('<div class="container">')
+
+        if STATIC_SERVER is None:
+            # Horrible performance, but arguably better than nothing
+            src = f"/video-album/{video_album_url}/video/{video_url}"
+        else:
+            src = f"{STATIC_SERVER}/{video_album_url}/{video_url}"
+        self.write_utf8(f"""
+            <div class="imgbox">
+                <video controls class="fit" src="{src}">
+            </div>
+        """)
+
+        self.write_utf8("""<div class="toolbar">""")
+        if index > 0:
+            self.write_utf8(f"""<a class="align-left" href="/video-album/{video_album_url}/view/{video_info[index-1]}">{_("generic:previous")}</a>""")
+        if index < len(video_info) - 1:
+            self.write_utf8(f"""<a class="align-right" href="/video-album/{video_album_url}/view/{video_info[index+1]}">{_("generic:next")}</a>""")
+        self.write_utf8("</div>")
+
+        video_meta_path = PATH / video_album_url / "metadata" / (video_url + ".yaml")
+        if video_meta_path.exists():
+            video_meta = load_yaml(video_meta_path)
+        else:
+            video_meta = {}
+
+        self.write_comment_section(video_meta.get("comments"))
+
+        self.write_utf8(f"""<a href="/video-album/{video_album_url}">{_("generic:back")}</a>""")
 
         self.write_utf8("</div>")
 
@@ -514,33 +647,44 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         path_params = parse_path(self.path)
 
-        if path_params["which"] == "album":
-            album_url = path_params["album_url"]
+        if path_params["which"] in ["album", "video_album"]:
+            if path_params["which"] == "album":
+                album_url = path_params["album_url"]
+                url = f"/album/{album_url}/"
+            else:
+                album_url = path_params["video_album_url"]
+                url = f"/video-album/{album_url}/"
             comments_path = PATH / album_url / "metadata" / "comments.yaml"
             if comments_path.exists():
                 comments = load_yaml(comments_path)
             else:
                 comments = []
 
-            url = f"/album/{album_url}/"
             if process_POST_comments(comments, post_data, self.user["id"], url):
                 save_yaml(comments, comments_path)
 
-        if path_params["which"] == "view":
-            album_url = path_params["album_url"]
-            img_url = path_params["img_url"]
-            img_meta_path = PATH / album_url / "metadata" / (img_url + ".yaml")
-            if img_meta_path.exists():
-                img_meta = load_yaml(img_meta_path) or {}
+        if path_params["which"] in ["view", "video_view"]:
+            if path_params["which"] == "view":
+                album_url = path_params["album_url"]
+                asset_url = path_params["img_url"]
+                url = f"/album/{album_url}/view/{asset_url}"
+                thumbnail = f"/album/{album_url}/thumbnail/{asset_url}"
             else:
-                img_meta = {}
-            comments = img_meta.get("comments", [])
+                album_url = path_params["video_album_url"]
+                asset_url = path_params["video_url"]
+                url = f"/video-album/{album_url}/view/{asset_url}"
+                thumbnail = f"/album/{album_url}/thumbnail/{asset_url}.jpeg"
 
-            url = f"/album/{album_url}/view/{img_url}"
-            thumbnail = f"/album/{album_url}/thumbnail/{img_url}"
+            asset_meta_path = PATH / album_url / "metadata" / (asset_url + ".yaml")
+            if asset_meta_path.exists():
+                asset_meta = load_yaml(asset_meta_path) or {}
+            else:
+                asset_meta = {}
+            comments = asset_meta.get("comments", [])
+
             if process_POST_comments(comments, post_data, self.user["id"], url, thumbnail):
-                img_meta["comments"] = comments
-                save_yaml(img_meta, img_meta_path)
+                asset_meta["comments"] = comments
+                save_yaml(asset_meta, asset_meta_path)
 
         # Invoke Post/Redirect/Get
         self.send_response(303)
@@ -557,6 +701,7 @@ if __name__ == "__main__":
     parser.add_argument("--hostname", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--static", type=str)
 
     args = parser.parse_args()
 
@@ -564,6 +709,7 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO)
 
     PATH = Path(args.directory)
+    STATIC_SERVER = args.static
 
     print("Loading metadata...")
     metadata = load_yaml(PATH / "metadata.yaml")
