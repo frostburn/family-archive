@@ -4,7 +4,11 @@ from PIL import Image, ImageOps
 import base64
 from utils import *
 
-# TODO: Update users if already exists
+# TODO:
+# Update users if already exists
+# Support for videos
+# Support for audio
+# Support for symlinking albums: Ban users to keep comments, but prevent access.
 
 def numeric_key(path):
     s = str(path)
@@ -28,6 +32,16 @@ def numeric_key(path):
     else:
         key.append(part)
     return tuple(key)
+
+def preserve_order(new_list, old_list):
+    result = []
+    for old in old_list:
+        if old in new_list:
+            result.append(old)
+    for new in new_list:
+        if new not in old_list:
+            result.append(new)
+    return result
 
 if __name__ == "__main__":
     parser = ArgumentParser(
@@ -121,11 +135,13 @@ if __name__ == "__main__":
                 if suffix.lower() in (".jpg", ".jpeg"):
                     thumbnail_file_path = thumbnail_path / file_path.name
                     if thumbnail_file_path.exists():
+                        image_list.append(file_path.name)
                         continue
                 else:
                     jpeg_path = Path(str(file_path) + ".jpeg")
                     thumbnail_file_path = thumbnail_path / jpeg_path.name
                     if thumbnail_file_path.exists():
+                        image_list.append(jpeg_path.name)
                         continue
                 try:
                     with Image.open(file_path) as img:
@@ -164,7 +180,15 @@ if __name__ == "__main__":
                     )
 
             image_list_info = metadata_path / "image-info.yaml"
-            if not image_list_info.exists():
+            if image_list_info.exists():
+                existing = load_yaml(image_list_info)
+                save_yaml(preserve_order(image_list, existing), image_list_info)
+            else:
                 save_yaml(image_list, image_list_info)
 
-    save_yaml(albums, path / "album-info.yaml")
+    album_info_path = path / "album-info.yaml"
+    if album_info_path.exists():
+        existing = load_yaml(album_info_path)
+        save_yaml(preserve_order(albums, existing), album_info_path)
+    else:
+        save_yaml(albums, album_info_path)
