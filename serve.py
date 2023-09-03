@@ -133,6 +133,41 @@ def parse_path(path):
                             "video_album_url": video_album_url,
                             "video_url": video_url,
                         }
+    elif path.startswith("audio-album"):
+        parts = path.split("/")
+        if len(parts) == 1:
+            return {
+                "which": "audio_album_index",
+                "content_type": "text/html",
+            }
+        else:
+            audio_album_url = parts[1]
+            audio_album_path = PATH / audio_album_url
+            if audio_album_path.exists() and audio_album_path.is_dir():
+                if len(parts) == 2:
+                    return {
+                        "which": "audio_album",
+                        "content_type": "text/html",
+                        "audio_album_url": audio_album_url
+                    }
+                elif parts[2] == "view":
+                    audio_url = parts[3]
+                    if (audio_album_path / audio_url).exists():
+                        return {
+                            "which": "audio_view",
+                            "content_type": "text/html",
+                            "audio_album_url": audio_album_url,
+                            "audio_url": audio_url,
+                        }
+                elif parts[2] == "audio":
+                    audio_url = parts[3]
+                    if (audio_album_path / audio_url).exists():
+                        return {
+                            "which": "audio",
+                            "content_type": "audio/mp3",
+                            "audio_album_url": audio_album_url,
+                            "audio_url": audio_url,
+                        }
 
 def process_POST_comments(comments, post_data, user_id, url, thumbnail=None):
     update_key = b"update"
@@ -243,12 +278,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <title>{NAME}</title>
             """)
-            if which in ["comments", "album", "view", "video_album", "video_view"]:
+            if which in ["comments", "album", "view", "video_album", "video_view", "audio_album", "audio_view"]:
                 self.write_style()
                 self.write_script()
-            if which in ["album", "video_album"]:
+            if which in ["album", "video_album", "audio_album"]:
                 self.write_album_style()
-            if which in ["view", "video_view"]:
+            if which in ["view", "video_view", "audio_view"]:
                 self.write_view_style()
 
             self.write_utf8("</head>")
@@ -288,6 +323,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with open(PATH / path_params["video_album_url"] / path_params["video_url"], "rb") as f:
                 while chunk := f.read(8192):
                     self.wfile.write(chunk)
+        elif which == "audio_album_index":
+            self.write_audio_album_index()
+        elif which == "audio_album":
+            self.write_audio_album(path_params["audio_album_url"])
+        elif which == "audio_view":
+            self.write_audio_view(path_params["audio_album_url"], path_params["audio_url"])
+        elif which == "audio":
+            print("WARNING: Serving audio file through the main thread. Please configure a static server.")
+            with open(PATH / path_params["audio_album_url"] / path_params["audio_url"], "rb") as f:
+                while chunk := f.read(8192):
+                    self.wfile.write(chunk)
 
         if content_type == "text/html":
             self.write_utf8("</body></html>")
@@ -298,6 +344,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<a href="/album/">{_("album:albums")}</a><br>""")
         if (PATH / "video-album-info.yaml").exists():
             self.write_utf8(f"""<a href="/video-album/">{_("video_album:video_albums")}</a><br>""")
+        if (PATH / "audio-album-info.yaml").exists():
+            self.write_utf8(f"""<a href="/audio-album/">{_("audio_album:audio_albums")}</a><br>""")
         self.write_utf8(f"""<a href="/comments/">{_("comments:latest_comments")}</a>""")
         if self.admin:
             self.write_utf8(f"""<p><b>{_("album:admin_active")}</b></p>""")
@@ -619,6 +667,81 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         self.write_utf8("</div>")
 
+    def write_audio_album_index(self):
+        self.write_utf8(f"""<h1>{_("audio_album:audio_albums")}</h1>""")
+        audio_album_urls = load_yaml(PATH / "audio-album-info.yaml")
+        for audio_album_url in audio_album_urls:
+            audio_album_path = PATH / audio_album_url
+            metadata = load_yaml(audio_album_path / "metadata" / "album-info.yaml")
+            self.write_utf8(f"""<a href="/audio-album/{audio_album_url}">{metadata["name"]}</a><br>""")
+
+        self.write_utf8("<br>")
+        self.write_utf8(f"""<a href="/">{_("generic:back")}</a>""")
+
+    def write_audio_album(self, path):
+        audio_album_path = PATH / path
+        metadata = load_yaml(audio_album_path / "metadata" / "album-info.yaml")
+        self.write_utf8(f"""<h1>{metadata["name"]}</h1>""")
+
+        unknown_text = f"""({_("album:unknown")})"""
+        self.write_utf8(f"""<h2>{_("generic:location")}: {metadata.get("location", unknown_text)}</h2>""")
+        self.write_utf8(f"""<h2>{_("generic:date")}: {metadata.get("date", unknown_text)}</h2>""")
+        audio_info = load_yaml(audio_album_path / "metadata" / "audio-info.yaml")
+        for filename in audio_info:
+            audio_metadata = load_yaml(audio_album_path / "metadata" / (filename + ".yaml"))
+            prefix = f"/audio-album/{audio_album_path.name}"
+            self.write_utf8(f"""
+                <a href="{prefix}/view/{filename}">
+                    {audio_metadata["name"]}
+                </a>
+                <br>
+            """)
+
+        self.write_utf8("<br>")
+
+        comments_path = audio_album_path / "metadata" / "comments.yaml"
+        if comments_path.exists():
+            self.write_comment_section(load_yaml(comments_path))
+        else:
+            self.write_comment_section(None)
+        self.write_utf8(f"""<a href="/audio-album">{_("generic:back")}</a>""")
+
+    def write_audio_view(self, audio_album_url, audio_url):
+        audio_info = load_yaml(PATH / audio_album_url / "metadata" / "audio-info.yaml")
+        index = audio_info.index(audio_url)
+
+        self.write_utf8('<div class="container">')
+
+        if STATIC_SERVER is None:
+            # Horrible performance, but arguably better than nothing
+            src = f"/audio-album/{audio_album_url}/audio/{audio_url}"
+        else:
+            src = f"{STATIC_SERVER}/{audio_album_url}/{audio_url}"
+        self.write_utf8(f"""
+            <div class="imgbox">
+                <audio controls class="fit" src="{src}">
+            </div>
+        """)
+
+        self.write_utf8("""<div class="toolbar">""")
+        if index > 0:
+            self.write_utf8(f"""<a class="align-left" href="/audio-album/{audio_album_url}/view/{audio_info[index-1]}">{_("generic:previous")}</a>""")
+        if index < len(audio_info) - 1:
+            self.write_utf8(f"""<a class="align-right" href="/audio-album/{audio_album_url}/view/{audio_info[index+1]}">{_("generic:next")}</a>""")
+        self.write_utf8("</div>")
+
+        audio_meta_path = PATH / audio_album_url / "metadata" / (audio_url + ".yaml")
+        if audio_meta_path.exists():
+            audio_meta = load_yaml(audio_meta_path)
+        else:
+            audio_meta = {}
+
+        self.write_comment_section(audio_meta.get("comments"))
+
+        self.write_utf8(f"""<a href="/audio-album/{audio_album_url}">{_("generic:back")}</a>""")
+
+        self.write_utf8("</div>")
+
     def do_GET(self):
         if not self.authorize():
             return
@@ -647,13 +770,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         path_params = parse_path(self.path)
 
-        if path_params["which"] in ["album", "video_album"]:
+        if path_params["which"] in ["album", "video_album", "audio_album"]:
             if path_params["which"] == "album":
                 album_url = path_params["album_url"]
                 url = f"/album/{album_url}/"
-            else:
+            elif path_params["which"] == "video_album":
                 album_url = path_params["video_album_url"]
                 url = f"/video-album/{album_url}/"
+            else:
+                album_url = path_params["audio_album_url"]
+                url = f"/audio-album/{album_url}/"
             comments_path = PATH / album_url / "metadata" / "comments.yaml"
             if comments_path.exists():
                 comments = load_yaml(comments_path)
@@ -663,16 +789,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if process_POST_comments(comments, post_data, self.user["id"], url):
                 save_yaml(comments, comments_path)
 
-        if path_params["which"] in ["view", "video_view"]:
+        if path_params["which"] in ["view", "video_view", "audio_view"]:
             if path_params["which"] == "view":
                 album_url = path_params["album_url"]
                 asset_url = path_params["img_url"]
                 url = f"/album/{album_url}/view/{asset_url}"
                 thumbnail = f"/album/{album_url}/thumbnail/{asset_url}"
-            else:
+            elif path_params["which"] == "video_view":
                 album_url = path_params["video_album_url"]
                 asset_url = path_params["video_url"]
                 url = f"/video-album/{album_url}/view/{asset_url}"
+                thumbnail = f"/album/{album_url}/thumbnail/{asset_url}.jpeg"
+            else:
+                album_url = path_params["audio_album_url"]
+                asset_url = path_params["audio_url"]
+                url = f"/audio-album/{album_url}/view/{asset_url}"
                 thumbnail = f"/album/{album_url}/thumbnail/{asset_url}.jpeg"
 
             asset_meta_path = PATH / album_url / "metadata" / (asset_url + ".yaml")
@@ -695,7 +826,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 if __name__ == "__main__":
     parser = ArgumentParser(
         prog="Family Archive",
-        description="Photo/Video archive server",
+        description="Photo/Video/Audio archive server",
     )
     parser.add_argument("directory", type=str)
     parser.add_argument("--hostname", type=str, default="localhost")

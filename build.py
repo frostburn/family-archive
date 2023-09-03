@@ -10,6 +10,15 @@ from utils import *
 # Support for audio
 # Support for symlinking albums: Ban users to keep comments, but prevent access.
 
+AUDIO_EXTENSIONS = [".mp3"]
+VIDEO_EXTENSIONS = [".mp4"]
+
+def is_audio(path):
+    return path.suffix.lower() in AUDIO_EXTENSIONS
+
+def is_video(path):
+    return path.suffix.lower() in VIDEO_EXTENSIONS
+
 def numeric_key(path):
     s = str(path)
     key = []
@@ -98,11 +107,12 @@ if __name__ == "__main__":
 
         save_yaml(users, users_path)
 
-    albums = []
+    audio_albums = []
+    video_albums = []
+    image_albums = []
 
     for album_path in path.iterdir():
         if album_path.is_dir():
-            albums.append(album_path.name)
             print("Working on", album_path)
             thumbnail_path = album_path / "thumbnails"
             thumbnail_path.mkdir(exist_ok=True)
@@ -127,48 +137,87 @@ if __name__ == "__main__":
                 save_yaml(info, album_info)
 
             image_list = []
+            audio_list = []
+            video_list = []
 
             file_paths = [p for p in album_path.iterdir() if not p.is_dir()]
             file_paths.sort(key=numeric_key)
             for file_path in file_paths:
-                suffix = file_path.suffix
-                if suffix.lower() in (".jpg", ".jpeg"):
-                    thumbnail_file_path = thumbnail_path / file_path.name
-                    if thumbnail_file_path.exists():
-                        image_list.append(file_path.name)
-                        continue
+                if is_audio(file_path):
+                    audio_list.append(file_path.name)
+                elif is_video(file_path):
+                    # Thumbnail creation is a manual process for now
+                    thumbnail_file_path = thumbnail_path / (file_path.name + ".jpeg")
+                    if not thumbnail_file_path.exists():
+                        print("Remember to create a 200x200 video thumbnail at", thumbnail_file_path)
+                    video_list.append(file_path.name)
                 else:
-                    jpeg_path = Path(str(file_path) + ".jpeg")
-                    thumbnail_file_path = thumbnail_path / jpeg_path.name
-                    if thumbnail_file_path.exists():
-                        image_list.append(jpeg_path.name)
-                        continue
-                try:
-                    with Image.open(file_path) as img:
-                        img = ImageOps.exif_transpose(img)
-                        side_length = min(img.width, img.height)
-                        x = (img.width - side_length) // 2
-                        y = (img.height - side_length) // 2
-                        thumbnail = img.crop((x, y, x + side_length, y + side_length))
-                        thumbnail = thumbnail.resize((200, 200))
-                        if suffix.lower() in (".jpg", ".jpeg"):
-                            print("Creating thumbnail for", file_path.name)
-                            thumbnail.save(thumbnail_file_path)
-                            thumbnail.close()
+                    suffix = file_path.suffix
+                    if suffix.lower() in (".jpg", ".jpeg"):
+                        thumbnail_file_path = thumbnail_path / file_path.name
+                        if thumbnail_file_path.exists():
                             image_list.append(file_path.name)
-                        elif not jpeg_path.exists():
-                            print(f"Converting {file_path.name} to jpeg")
-                            img = img.convert("RGB")
-                            img.save(jpeg_path)
-                            img.close()
-                            thumbnail_file_path = thumbnail_path / jpeg_path.name
-                            print("Creating thumbnail for", jpeg_path.name)
-                            thumbnail = thumbnail.convert("RGB")
-                            thumbnail.save(thumbnail_file_path)
-                            thumbnail.close()
+                            continue
+                    else:
+                        jpeg_path = Path(str(file_path) + ".jpeg")
+                        thumbnail_file_path = thumbnail_path / jpeg_path.name
+                        if thumbnail_file_path.exists():
                             image_list.append(jpeg_path.name)
-                except IOError:
-                    print(file_path.name, "couldn't be opened as an image")
+                            continue
+                    try:
+                        with Image.open(file_path) as img:
+                            try:
+                                transposed = ImageOps.exif_transpose(img)
+                                img = transposed
+                            except TypeError:
+                                pass
+                            side_length = min(img.width, img.height)
+                            x = (img.width - side_length) // 2
+                            y = (img.height - side_length) // 2
+                            thumbnail = img.crop((x, y, x + side_length, y + side_length))
+                            thumbnail = thumbnail.resize((200, 200))
+                            if suffix.lower() in (".jpg", ".jpeg"):
+                                print("Creating thumbnail for", file_path.name)
+                                thumbnail.save(thumbnail_file_path)
+                                thumbnail.close()
+                                image_list.append(file_path.name)
+                            elif not jpeg_path.exists():
+                                print(f"Converting {file_path.name} to jpeg")
+                                img = img.convert("RGB")
+                                img.save(jpeg_path)
+                                img.close()
+                                thumbnail_file_path = thumbnail_path / jpeg_path.name
+                                print("Creating thumbnail for", jpeg_path.name)
+                                thumbnail = thumbnail.convert("RGB")
+                                thumbnail.save(thumbnail_file_path)
+                                thumbnail.close()
+                                image_list.append(jpeg_path.name)
+                    except IOError:
+                        print(file_path.name, "couldn't be opened as an image")
+
+            for filename in audio_list + video_list:
+                file_path = album_path / filename
+                file_metadata_path = metadata_path / (filename + ".yaml")
+                if not file_metadata_path.exists():
+                    name = input(f"Give display name for media {file_path}: ")
+                    save_yaml(
+                        {"md5": md5_checksum(file_path), "name": name},
+                        file_metadata_path
+                    )
+
+            audio_list_info = metadata_path / "audio-info.yaml"
+            if audio_list_info.exists():
+                existing = load_yaml(audio_list_info)
+                save_yaml(preserve_order(audio_list, existing), audio_list_info)
+            else:
+                save_yaml(audio_list, audio_list_info)
+
+            video_list_info = metadata_path / "video-info.yaml"
+            if video_list_info.exists():
+                existing = load_yaml(video_list_info)
+                save_yaml(preserve_order(video_list, existing), video_list_info)
+            else:
+                save_yaml(video_list, video_list_info)
 
             for filename in image_list:
                 file_path = album_path / filename
@@ -186,9 +235,24 @@ if __name__ == "__main__":
             else:
                 save_yaml(image_list, image_list_info)
 
-    album_info_path = path / "album-info.yaml"
-    if album_info_path.exists():
-        existing = load_yaml(album_info_path)
-        save_yaml(preserve_order(albums, existing), album_info_path)
-    else:
-        save_yaml(albums, album_info_path)
+            if audio_list:
+                audio_albums.append(album_path.name)
+            if video_list:
+                video_albums.append(album_path.name)
+            if image_list:
+                image_albums.append(album_path.name)
+
+    lists_and_paths = [
+        (audio_albums, path / "audio-album-info.yaml"),
+        (video_albums, path / "video-album-info.yaml"),
+        (image_albums, path / "album-info.yaml"),
+    ]
+
+    for albums, album_info_path in lists_and_paths:
+        if not albums:
+            continue
+        if album_info_path.exists():
+            existing = load_yaml(album_info_path)
+            save_yaml(preserve_order(albums, existing), album_info_path)
+        else:
+            save_yaml(albums, album_info_path)

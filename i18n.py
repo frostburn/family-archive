@@ -22,6 +22,7 @@ STRINGS = {
         "generic:previous": "Edellinen",
         "generic:next": "Seuraava",
         "video_album:video_albums": "Video-albumit",
+        "audio_album:audio_albums": "Äänitteet",
     },
     "en": {
         "generic:back": "Back",
@@ -42,6 +43,7 @@ STRINGS = {
         "generic:previous": "Previous",
         "generic:next": "Next",
         "video_album:video_albums": "Video albums",
+        "audio_album:audio_albums": "Audio recordings",
     }
 }
 
