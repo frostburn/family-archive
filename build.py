@@ -10,6 +10,7 @@ from utils import *
 # Support for audio
 # Support for symlinking albums: Ban users to keep comments, but prevent access.
 # Ignore pages directory
+# Implement blacklists for permanently hiding albums
 
 AUDIO_EXTENSIONS = [".mp3"]
 VIDEO_EXTENSIONS = [".mp4"]

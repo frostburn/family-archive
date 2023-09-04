@@ -364,15 +364,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def write_custom_page_index(self):
         self.write_utf8(f"""<h1>{_("page:pages")}</h1>""")
         info = load_yaml(PATH / "pages.yaml")
-        print(info)
         for page_info in info["content"]:
-            print(page_info)
             self.write_utf8(f"""<a href="/page/{page_info["url"]}">{page_info["name"]}</a>""")
+        self.write_utf8(f"""<br><br><a href="/">{_("generic:back")}</a>""")
 
     def write_custom_page(self, page_url):
         info = load_yaml(PATH / "pages.yaml")
         with open(PATH / info["directory"] / page_url) as f:
             self.write_utf8(f.read())
+        self.write_utf8(f"""<br><br><a href="/page">{_("generic:back")}</a>""")
 
     def write_index(self):
         self.write_utf8(f"""<h1>{NAME}</h1>""")
