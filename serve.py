@@ -168,6 +168,25 @@ def parse_path(path):
                             "audio_album_url": audio_album_url,
                             "audio_url": audio_url,
                         }
+    elif path.startswith("page"):
+        info_path = PATH / "pages.yaml"
+        if info_path.exists():
+            parts = path.split("/")
+            if len(parts) == 1:
+                return {
+                    "which": "page_index",
+                    "content_type": "text/html",
+                }
+            else:
+                info = load_yaml(info_path)
+                page_url = parts[1]
+                if (PATH / info["directory"] / page_url).exists():
+                    return {
+                        "which": "page",
+                        "content_type": "text/html",
+                        "page_url": page_url
+                    }
+
 
 def process_POST_comments(comments, post_data, user_id, url, thumbnail=None):
     update_key = b"update"
@@ -286,7 +305,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if which in ["view", "video_view", "audio_view"]:
                 self.write_view_style()
 
-            self.write_utf8("</head>")
+            self.write_utf8("</head><body>")
 
         if not found:
             self.write_utf8(f"""<p>{_("404:page_not_found")}</p>""")
@@ -334,9 +353,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with open(PATH / path_params["audio_album_url"] / path_params["audio_url"], "rb") as f:
                 while chunk := f.read(8192):
                     self.wfile.write(chunk)
+        elif which == "page_index":
+            self.write_custom_page_index()
+        elif which == "page":
+            self.write_custom_page(path_params["page_url"])
 
         if content_type == "text/html":
             self.write_utf8("</body></html>")
+
+    def write_custom_page_index(self):
+        self.write_utf8(f"""<h1>{_("page:pages")}</h1>""")
+        info = load_yaml(PATH / "pages.yaml")
+        print(info)
+        for page_info in info["content"]:
+            print(page_info)
+            self.write_utf8(f"""<a href="/page/{page_info["url"]}">{page_info["name"]}</a>""")
+
+    def write_custom_page(self, page_url):
+        info = load_yaml(PATH / "pages.yaml")
+        with open(PATH / info["directory"] / page_url) as f:
+            self.write_utf8(f.read())
 
     def write_index(self):
         self.write_utf8(f"""<h1>{NAME}</h1>""")
@@ -346,6 +382,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.write_utf8(f"""<a href="/video-album/">{_("video_album:video_albums")}</a><br>""")
         if (PATH / "audio-album-info.yaml").exists():
             self.write_utf8(f"""<a href="/audio-album/">{_("audio_album:audio_albums")}</a><br>""")
+        if (PATH / "pages.yaml").exists():
+            self.write_utf8(f"""<a href="/page/">{_("page:pages")}</a><br>""")
         self.write_utf8(f"""<a href="/comments/">{_("comments:latest_comments")}</a>""")
         if self.admin:
             self.write_utf8(f"""<p><b>{_("album:admin_active")}</b></p>""")
@@ -651,6 +689,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.write_utf8("""<div class="toolbar">""")
         if index > 0:
             self.write_utf8(f"""<a class="align-left" href="/video-album/{video_album_url}/view/{video_info[index-1]}">{_("generic:previous")}</a>""")
+        self.write_utf8("""<span class="icon"></span>""")  # Dummy element to fix layout
         if index < len(video_info) - 1:
             self.write_utf8(f"""<a class="align-right" href="/video-album/{video_album_url}/view/{video_info[index+1]}">{_("generic:next")}</a>""")
         self.write_utf8("</div>")
@@ -726,6 +765,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.write_utf8("""<div class="toolbar">""")
         if index > 0:
             self.write_utf8(f"""<a class="align-left" href="/audio-album/{audio_album_url}/view/{audio_info[index-1]}">{_("generic:previous")}</a>""")
+        self.write_utf8("""<span class="icon"></span>""")  # Dummy element to fix layout
         if index < len(audio_info) - 1:
             self.write_utf8(f"""<a class="align-right" href="/audio-album/{audio_album_url}/view/{audio_info[index+1]}">{_("generic:next")}</a>""")
         self.write_utf8("</div>")
