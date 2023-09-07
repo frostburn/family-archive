@@ -749,7 +749,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         audio_info = load_yaml(PATH / audio_album_url / "metadata" / "audio-info.yaml")
         index = audio_info.index(audio_url)
 
+        metadata = load_yaml(PATH / audio_album_url / "metadata" / (audio_url + ".yaml"))
+
         self.write_utf8('<div class="container">')
+
+        self.write_utf8(f"""<h1>{metadata["name"]}</h1>""")
 
         if STATIC_SERVER is None:
             # Horrible performance, but arguably better than nothing
