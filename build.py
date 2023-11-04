@@ -115,6 +115,8 @@ if __name__ == "__main__":
 
     for album_path in path.iterdir():
         if album_path.is_dir():
+            if album_path.name == 'pages':
+                continue
             print("Working on", album_path)
             thumbnail_path = album_path / "thumbnails"
             thumbnail_path.mkdir(exist_ok=True)
